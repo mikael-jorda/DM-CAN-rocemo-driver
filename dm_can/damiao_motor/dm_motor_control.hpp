@@ -141,7 +141,10 @@ std::vector<uint8_t> CanPacketEncoder::pack_write_param_data(uint32_t send_can_i
 
 class CanPacketDecoder {
 public:
-    static StateResult parse_motor_state_data(const Motor& motor, const std::vector<uint8_t>& data);
+    // custom_firmware=false → standard 16-12-12 encoding
+    // custom_firmware=true  → custom 16-16-16 encoding (vel & tau each 16 bits)
+    static StateResult parse_motor_state_data(const Motor& motor, const std::vector<uint8_t>& data,
+                                              bool custom_firmware = false);
     static ParamResult parse_motor_param_data(const std::vector<uint8_t>& data);
 
 private:

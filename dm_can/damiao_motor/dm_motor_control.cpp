@@ -78,25 +78,53 @@ CANPacket CanPacketEncoder::create_refresh_command(const Motor& motor) {
 
 // Data interpretation methods (use recv_can_id for received data)
 StateResult CanPacketDecoder::parse_motor_state_data(const Motor& motor,
-                                                     const std::vector<uint8_t>& data) {
+                                                     const std::vector<uint8_t>& data,
+                                                     bool custom_firmware) {
     if (data.size() < 8) {
         std::cerr << "Warning: Skipping motor state data less than 8 bytes" << std::endl;
         return {0, 0, 0, 0, 0, false};
     }
 
-    // Parse state data
-    uint16_t q_uint = (static_cast<uint16_t>(data[1]) << 8) | data[2];
-    uint16_t dq_uint =
-        (static_cast<uint16_t>(data[3]) << 4) | (static_cast<uint16_t>(data[4]) >> 4);
-    uint16_t tau_uint = (static_cast<uint16_t>(data[4] & 0xf) << 8) | data[5];
-    int t_mos = static_cast<int>(data[6]);
-    int t_rotor = static_cast<int>(data[7]);
-
-    // Convert to physical values
     LimitParam limits = MOTOR_LIMIT_PARAMS[static_cast<int>(motor.get_motor_type())];
-    double recv_q = CanPacketDecoder::uint_to_double(q_uint, -limits.pMax, limits.pMax, 16);
-    double recv_dq = CanPacketDecoder::uint_to_double(dq_uint, -limits.vMax, limits.vMax, 12);
-    double recv_tau = CanPacketDecoder::uint_to_double(tau_uint, -limits.tMax, limits.tMax, 12);
+
+    uint16_t q_uint;
+    uint16_t dq_uint;
+    uint16_t tau_uint;
+    int t_mos;
+    int t_rotor;
+
+    if (custom_firmware) {
+        // Custom firmware: 16-16-16 encoding
+        // byte 0: motor ID
+        // bytes 1-2: position (16 bits, big-endian)
+        // bytes 3-4: velocity (16 bits, big-endian)
+        // bytes 5-6: torque   (16 bits, big-endian)
+        // byte 7:   t_mos (t_rotor not available)
+        q_uint   = (static_cast<uint16_t>(data[1]) << 8) | data[2];
+        dq_uint  = (static_cast<uint16_t>(data[3]) << 8) | data[4];
+        tau_uint = (static_cast<uint16_t>(data[5]) << 8) | data[6];
+        t_mos    = static_cast<int>(data[7]);
+        t_rotor  = 0;
+    } else {
+        // Standard firmware: 16-12-12 encoding
+        // byte 0: motor ID
+        // bytes 1-2:        position (16 bits)
+        // byte 3 + high nibble byte 4: velocity (12 bits)
+        // low nibble byte 4 + byte 5:  torque   (12 bits)
+        // byte 6: t_mos  byte 7: t_rotor
+        q_uint   = (static_cast<uint16_t>(data[1]) << 8) | data[2];
+        dq_uint  = (static_cast<uint16_t>(data[3]) << 4) | (static_cast<uint16_t>(data[4]) >> 4);
+        tau_uint = (static_cast<uint16_t>(data[4] & 0xf) << 8) | data[5];
+        t_mos    = static_cast<int>(data[6]);
+        t_rotor  = static_cast<int>(data[7]);
+    }
+
+    const int vel_bits = custom_firmware ? 16 : 12;
+    const int tau_bits = custom_firmware ? 16 : 12;
+
+    double recv_q   = CanPacketDecoder::uint_to_double(q_uint,   -limits.pMax, limits.pMax, 16);
+    double recv_dq  = CanPacketDecoder::uint_to_double(dq_uint,  -limits.vMax, limits.vMax, vel_bits);
+    double recv_tau = CanPacketDecoder::uint_to_double(tau_uint, -limits.tMax, limits.tMax, tau_bits);
 
     return {recv_q, recv_dq, recv_tau, t_mos, t_rotor, true};
 }

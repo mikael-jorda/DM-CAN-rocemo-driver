@@ -36,6 +36,7 @@ struct Config {
 	uint32_t recv_offset = 0x10;
 	int samples = 50;
 	int interval_ms = 100;
+	bool custom_firmware = false;  // 16-16-16 encoding instead of standard 16-12-12
 };
 
 const std::map<std::string, MotorType> kMotorTypeMap = {
@@ -58,8 +59,8 @@ void print_usage(const char* prog) {
 			  << "  --motor-type <name>    Motor type (default: DM4310)\n"
 			  << "  --samples <n>          Number of state samples (default: 50)\n"
 			  << "  --interval-ms <n>      Interval between samples (default: 100)\n"
-			  << "  --no-fd                Use classic CAN instead of CAN-FD\n"
-			  << "  --help                 Show this help\n\n"
+			  << "  --no-fd                Use classic CAN instead of CAN-FD\n"		  
+			  << "  --custom-firmware      Use 16-16-16 state encoding (default: 16-12-12)\n"			  << "  --help                 Show this help\n\n"
 			  << "Example:\n"
 			  << "  " << prog
 			  << " --iface can0 --min-id 1 --max-id 32 --motor-type DM4310 "
@@ -101,6 +102,11 @@ bool parse_args(int argc, char** argv, Config& cfg) {
 
 		if (arg == "--no-fd") {
 			cfg.use_fd = false;
+			continue;
+		}
+
+		if (arg == "--custom-firmware") {
+			cfg.custom_firmware = true;
 			continue;
 		}
 
@@ -328,7 +334,7 @@ std::optional<double> query_register_with_retry(canbus::CANSocket& sock, bool us
 }
 
 std::optional<StateResult> read_state_sample(canbus::CANSocket& sock, bool use_fd,
-											 const Motor& motor) {
+											 const Motor& motor, bool custom_firmware = false) {
 	using damiao_motor::CanPacketDecoder;
 	using damiao_motor::CanPacketEncoder;
 
@@ -347,7 +353,7 @@ std::optional<StateResult> read_state_sample(canbus::CANSocket& sock, bool use_f
 		const uint8_t payload_motor_id = data[0] & 0x0F;
 		if (payload_motor_id != static_cast<uint8_t>(motor.get_send_can_id() & 0x0F)) continue;
 
-		const auto parsed = CanPacketDecoder::parse_motor_state_data(motor, data);
+		const auto parsed = CanPacketDecoder::parse_motor_state_data(motor, data, custom_firmware);
 		if (parsed.valid) {
 			latest = parsed;
 		}
@@ -408,6 +414,43 @@ int main(int argc, char** argv) {
 			if (i + 1 < motors.size()) std::cout << ", ";
 		}
 		std::cout << "\n";
+		std::cout << "Firmware mode: "
+				  << (cfg.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
+
+		// --- Firmware sanity check ---
+		// Enable motors briefly to get a state reply, then verify that torque
+		// reads back as (near) zero at rest. A non-zero torque strongly suggests
+		// the chosen firmware encoding does not match what the motor is running.
+		for (const auto& motor : motors) {
+			send_packet(can_socket, cfg.use_fd,
+						damiao_motor::CanPacketEncoder::create_enable_command(motor));
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		constexpr double kTorqueSanityThreshold = 1.0;  // Nm; firmware mismatch causes large garbage
+		bool firmware_ok = true;
+		for (const auto& motor : motors) {
+			const auto state = read_state_sample(can_socket, cfg.use_fd, motor, cfg.custom_firmware);
+			if (!state.has_value()) continue;
+			if (std::abs(state->torque) > kTorqueSanityThreshold) {
+				std::cerr << "[FIRMWARE MISMATCH] Motor 0x" << std::hex
+						  << motor.get_send_can_id() << std::dec
+						  << " reported torque=" << state->torque
+						  << " Nm at rest (threshold: " << kTorqueSanityThreshold << " Nm).\n"
+						  << "  Expected firmware: "
+						  << (cfg.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)")
+						  << ".\n"
+						  << "  Try toggling --custom-firmware.\n";
+				firmware_ok = false;
+			}
+		}
+		if (!firmware_ok) {
+			for (const auto& motor : motors) {
+				send_packet(can_socket, cfg.use_fd,
+							damiao_motor::CanPacketEncoder::create_disable_command(motor));
+			}
+			return 1;
+		}
 
 		std::map<uint32_t, std::map<int, double>> register_values;
 
@@ -451,6 +494,8 @@ int main(int argc, char** argv) {
 			send_packet(can_socket, cfg.use_fd,
 						damiao_motor::CanPacketEncoder::create_enable_command(motor));
 		}
+		// Motors were already enabled by the firmware check; this re-enables
+		// any that may have been left disabled after the sanity check pass.
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
 		std::cout << "\n=== Live state (position / velocity / torque) ===\n";
@@ -463,7 +508,7 @@ int main(int argc, char** argv) {
 			batch_states.reserve(motors.size());
 
 			for (const auto& motor : motors) {
-				batch_states.push_back(read_state_sample(can_socket, cfg.use_fd, motor));
+				batch_states.push_back(read_state_sample(can_socket, cfg.use_fd, motor, cfg.custom_firmware));
 			}
 
 			std::cout << "\nSample " << i << "\n";
