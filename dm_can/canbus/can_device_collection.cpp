@@ -13,10 +13,10 @@
 // limitations under the License.
 
 #include <iostream>
-#include <openarm/canbus/can_device_collection.hpp>
-#include <openarm/canbus/can_socket.hpp>
+#include <canbus/can_device_collection.hpp>
+#include <canbus/can_socket.hpp>
 
-namespace openarm::canbus {
+namespace canbus {
 
 CANDeviceCollection::CANDeviceCollection(CANSocket& can_socket) : can_socket_(can_socket) {}
 
@@ -59,4 +59,4 @@ void CANDeviceCollection::dispatch_frame_callback(canfd_frame& frame) {
     // networks)
 }
 
-}  // namespace openarm::canbus
+}  // namespace canbus

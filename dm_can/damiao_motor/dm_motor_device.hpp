@@ -14,12 +14,12 @@
 
 #pragma once
 
-#include "../canbus/can_device.hpp"
-#include "../canbus/can_socket.hpp"
+#include <canbus/can_device.hpp>
+#include <canbus/can_socket.hpp>
 #include "dm_motor.hpp"
 #include "dm_motor_control.hpp"
 
-namespace openarm::damiao_motor {
+namespace damiao_motor {
 enum CallbackMode {
     STATE,
     PARAM,
@@ -50,4 +50,4 @@ private:
     bool use_fd_;  // Track if using CAN-FD
     ControlMode control_mode_ = ControlMode::MIT;
 };
-}  // namespace openarm::damiao_motor
+}  // namespace damiao_motor

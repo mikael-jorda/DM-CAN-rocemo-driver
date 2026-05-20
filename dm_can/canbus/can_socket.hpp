@@ -20,7 +20,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace openarm::canbus {
+namespace canbus {
 
 // Exception classes for socket operations
 class CANSocketException : public std::runtime_error {
@@ -71,4 +71,4 @@ protected:
     bool fd_enabled_;
 };
 
-}  // namespace openarm::canbus
+}  // namespace canbus

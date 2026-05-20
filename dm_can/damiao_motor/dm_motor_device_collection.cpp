@@ -16,9 +16,9 @@
 #include <linux/can/raw.h>
 
 #include <iostream>
-#include <openarm/damiao_motor/dm_motor_device_collection.hpp>
+#include <damiao_motor/dm_motor_device_collection.hpp>
 
-namespace openarm::damiao_motor {
+namespace damiao_motor {
 
 DMDeviceCollection::DMDeviceCollection(canbus::CANSocket& can_socket)
     : can_socket_(can_socket),
@@ -186,4 +186,4 @@ std::vector<std::shared_ptr<DMCANDevice>> DMDeviceCollection::get_dm_devices() c
     return dm_devices;
 }
 
-}  // namespace openarm::damiao_motor
+}  // namespace damiao_motor

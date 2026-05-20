@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <openarm/damiao_motor/dm_motor.hpp>
-#include <openarm/damiao_motor/dm_motor_constants.hpp>
+#include <damiao_motor/dm_motor.hpp>
+#include <damiao_motor/dm_motor_constants.hpp>
 #include <stdexcept>
 #include <string>
 
-namespace openarm::damiao_motor {
+namespace damiao_motor {
 
 // Constructor
 Motor::Motor(MotorType motor_type, uint32_t send_can_id, uint32_t recv_can_id)
@@ -67,4 +67,4 @@ LimitParam Motor::get_limit_param(MotorType motor_type) {
     return MOTOR_LIMIT_PARAMS[index];
 }
 
-}  // namespace openarm::damiao_motor
+}  // namespace damiao_motor

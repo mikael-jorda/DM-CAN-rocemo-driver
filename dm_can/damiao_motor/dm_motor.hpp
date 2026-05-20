@@ -20,7 +20,7 @@
 
 #include "dm_motor_constants.hpp"
 
-namespace openarm::damiao_motor {
+namespace damiao_motor {
 class Motor {
     friend class DMCANDevice;  // Allow MotorDeviceCan to access protected
                                // members
@@ -74,4 +74,4 @@ protected:
     // Parameter storage
     std::map<int, double> temp_param_dict_;
 };
-}  // namespace openarm::damiao_motor
+}  // namespace damiao_motor

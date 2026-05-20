@@ -15,17 +15,17 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
-#include <openarm/canbus/can_socket.hpp>
-#include <openarm/damiao_motor/dm_motor.hpp>
-#include <openarm/damiao_motor/dm_motor_constants.hpp>
-#include <openarm/damiao_motor/dm_motor_control.hpp>
+#include <canbus/can_socket.hpp>
+#include <damiao_motor/dm_motor.hpp>
+#include <damiao_motor/dm_motor_constants.hpp>
+#include <damiao_motor/dm_motor_control.hpp>
 
 namespace {
 
-using openarm::damiao_motor::Motor;
-using openarm::damiao_motor::MotorType;
-using openarm::damiao_motor::RID;
-using openarm::damiao_motor::StateResult;
+using damiao_motor::Motor;
+using damiao_motor::MotorType;
+using damiao_motor::RID;
+using damiao_motor::StateResult;
 
 struct Config {
 	std::string iface = "can0";
@@ -262,8 +262,8 @@ bool data_matches_motor_id(const std::vector<uint8_t>& data, uint32_t send_id) {
 	return id_in_payload == static_cast<uint16_t>(send_id & 0xFFFF);
 }
 
-void send_packet(openarm::canbus::CANSocket& sock, bool use_fd,
-				 const openarm::damiao_motor::CANPacket& packet) {
+void send_packet(canbus::CANSocket& sock, bool use_fd,
+				 const damiao_motor::CANPacket& packet) {
 	if (use_fd) {
 		canfd_frame frame{};
 		frame.can_id = packet.send_can_id;
@@ -280,7 +280,7 @@ void send_packet(openarm::canbus::CANSocket& sock, bool use_fd,
 	}
 }
 
-bool recv_one_frame(openarm::canbus::CANSocket& sock, bool use_fd, std::vector<uint8_t>& data,
+bool recv_one_frame(canbus::CANSocket& sock, bool use_fd, std::vector<uint8_t>& data,
 					canid_t& can_id) {
 	if (use_fd) {
 		canfd_frame frame{};
@@ -297,10 +297,10 @@ bool recv_one_frame(openarm::canbus::CANSocket& sock, bool use_fd, std::vector<u
 	return true;
 }
 
-std::optional<double> query_register_with_retry(openarm::canbus::CANSocket& sock, bool use_fd,
+std::optional<double> query_register_with_retry(canbus::CANSocket& sock, bool use_fd,
 												const Motor& motor, int rid, int retries = 4) {
-	using openarm::damiao_motor::CanPacketDecoder;
-	using openarm::damiao_motor::CanPacketEncoder;
+	using damiao_motor::CanPacketDecoder;
+	using damiao_motor::CanPacketEncoder;
 
 	for (int attempt = 0; attempt < retries; ++attempt) {
 		send_packet(sock, use_fd, CanPacketEncoder::create_query_param_command(motor, rid));
@@ -327,10 +327,10 @@ std::optional<double> query_register_with_retry(openarm::canbus::CANSocket& sock
 	return std::nullopt;
 }
 
-std::optional<StateResult> read_state_sample(openarm::canbus::CANSocket& sock, bool use_fd,
+std::optional<StateResult> read_state_sample(canbus::CANSocket& sock, bool use_fd,
 											 const Motor& motor) {
-	using openarm::damiao_motor::CanPacketDecoder;
-	using openarm::damiao_motor::CanPacketEncoder;
+	using damiao_motor::CanPacketDecoder;
+	using damiao_motor::CanPacketEncoder;
 
 	send_packet(sock, use_fd, CanPacketEncoder::create_refresh_command(motor));
 
@@ -358,7 +358,7 @@ std::optional<StateResult> read_state_sample(openarm::canbus::CANSocket& sock, b
 	return latest;
 }
 
-std::vector<Motor> scan_present_motors(openarm::canbus::CANSocket& can_socket,
+std::vector<Motor> scan_present_motors(canbus::CANSocket& can_socket,
 										   const Config& cfg) {
 	std::vector<Motor> motors;
 	motors.reserve(static_cast<size_t>(cfg.max_id - cfg.min_id + 1));
@@ -390,7 +390,7 @@ int main(int argc, char** argv) {
 	}
 
 	try {
-		openarm::canbus::CANSocket can_socket(cfg.iface, cfg.use_fd);
+		canbus::CANSocket can_socket(cfg.iface, cfg.use_fd);
 		std::cout << "Connected. iface=" << cfg.iface << " scan_range=[" << cfg.min_id << ", "
 				  << cfg.max_id << "] recv_offset=0x" << std::hex << cfg.recv_offset << std::dec
 				  << " fd=" << (cfg.use_fd ? "on" : "off") << "\n";
@@ -449,7 +449,7 @@ int main(int argc, char** argv) {
 
 		for (const auto& motor : motors) {
 			send_packet(can_socket, cfg.use_fd,
-						openarm::damiao_motor::CanPacketEncoder::create_enable_command(motor));
+						damiao_motor::CanPacketEncoder::create_enable_command(motor));
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
@@ -494,7 +494,7 @@ int main(int argc, char** argv) {
 
 		for (const auto& motor : motors) {
 			send_packet(can_socket, cfg.use_fd,
-						openarm::damiao_motor::CanPacketEncoder::create_disable_command(motor));
+						damiao_motor::CanPacketEncoder::create_disable_command(motor));
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 

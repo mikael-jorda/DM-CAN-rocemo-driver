@@ -24,7 +24,7 @@
 #include "dm_motor.hpp"
 #include "dm_motor_constants.hpp"
 
-namespace openarm::damiao_motor {
+namespace damiao_motor {
 // Forward declarations
 class Motor;
 
@@ -151,4 +151,4 @@ private:
     static bool is_in_ranges(int number);
 };
 
-}  // namespace openarm::damiao_motor
+}  // namespace damiao_motor

@@ -22,9 +22,9 @@
 #include <unistd.h>
 
 #include <iostream>
-#include <openarm/canbus/can_socket.hpp>
+#include <canbus/can_socket.hpp>
 
-namespace openarm::canbus {
+namespace canbus {
 
 CANSocket::CANSocket(const std::string& interface, bool enable_fd)
     : socket_fd_(-1), interface_(interface), fd_enabled_(enable_fd) {
@@ -136,4 +136,4 @@ bool CANSocket::is_data_available(int timeout_us) {
     return (result > 0 && FD_ISSET(socket_fd_, &read_fds));
 }
 
-}  // namespace openarm::canbus
+}  // namespace canbus

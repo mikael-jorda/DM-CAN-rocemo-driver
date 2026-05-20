@@ -17,12 +17,12 @@
 #include <memory>
 #include <vector>
 
-#include "../canbus/can_device_collection.hpp"
+#include <canbus/can_device_collection.hpp>
 #include "dm_motor_constants.hpp"
 #include "dm_motor_control.hpp"
 #include "dm_motor_device.hpp"
 
-namespace openarm::damiao_motor {
+namespace damiao_motor {
 
 class DMDeviceCollection {
 public:
@@ -77,4 +77,4 @@ protected:
     void send_command_to_device(std::shared_ptr<DMCANDevice> dm_device, const CANPacket& packet);
     std::vector<std::shared_ptr<DMCANDevice>> get_dm_devices() const;
 };
-}  // namespace openarm::damiao_motor
+}  // namespace damiao_motor
