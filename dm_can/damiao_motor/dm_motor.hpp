@@ -28,7 +28,7 @@ class Motor {
 
 public:
     // Constructor
-    Motor(MotorType motor_type, uint32_t send_can_id, uint32_t recv_can_id);
+    Motor(const LimitParam& limits, uint32_t send_can_id, uint32_t recv_can_id);
 
     // State getters
     double get_position() const { return state_q_; }
@@ -40,16 +40,13 @@ public:
     // Motor property getters
     uint32_t get_send_can_id() const { return send_can_id_; }
     uint32_t get_recv_can_id() const { return recv_can_id_; }
-    MotorType get_motor_type() const { return motor_type_; }
+    const LimitParam& get_limits() const { return limits_; }
 
     // Enable status getters
     bool is_enabled() const { return enabled_; }
 
     // Parameter methods
     double get_param(int RID) const;
-
-    // Static methods for motor properties
-    static LimitParam get_limit_param(MotorType motor_type);
 
 protected:
     // State update methods
@@ -62,7 +59,7 @@ protected:
     // Motor identifiers
     uint32_t send_can_id_;
     uint32_t recv_can_id_;
-    MotorType motor_type_;
+    LimitParam limits_;
 
     // Enable status
     bool enabled_;

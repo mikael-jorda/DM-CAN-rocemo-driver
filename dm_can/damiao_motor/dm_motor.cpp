@@ -14,16 +14,14 @@
 
 #include <damiao_motor/dm_motor.hpp>
 #include <damiao_motor/dm_motor_constants.hpp>
-#include <stdexcept>
-#include <string>
 
 namespace damiao_motor {
 
 // Constructor
-Motor::Motor(MotorType motor_type, uint32_t send_can_id, uint32_t recv_can_id)
+Motor::Motor(const LimitParam& limits, uint32_t send_can_id, uint32_t recv_can_id)
     : send_can_id_(send_can_id),
       recv_can_id_(recv_can_id),
-      motor_type_(motor_type),
+    limits_(limits),
       enabled_(false),
       state_q_(0.0),
       state_dq_(0.0),
@@ -56,15 +54,5 @@ void Motor::update_state(double q, double dq, double tau, int tmos, int trotor) 
 void Motor::set_state_tmos(int tmos) { state_tmos_ = tmos; }
 
 void Motor::set_state_trotor(int trotor) { state_trotor_ = trotor; }
-
-// Static methods
-LimitParam Motor::get_limit_param(MotorType motor_type) {
-    size_t index = static_cast<size_t>(motor_type);
-    if (index >= MOTOR_LIMIT_PARAMS.size()) {
-        throw std::invalid_argument("Invalid motor type: " +
-                                    std::to_string(static_cast<int>(motor_type)));
-    }
-    return MOTOR_LIMIT_PARAMS[index];
-}
 
 }  // namespace damiao_motor

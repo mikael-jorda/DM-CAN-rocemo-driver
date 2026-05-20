@@ -37,21 +37,21 @@ CANPacket CanPacketEncoder::create_set_zero_command(const Motor& motor) {
 
 CANPacket CanPacketEncoder::create_mit_control_command(const Motor& motor,
                                                        const MITParam& mit_param) {
-    return {motor.get_send_can_id(), pack_mit_control_data(motor.get_motor_type(), mit_param)};
+    return {motor.get_send_can_id(), pack_mit_control_data(motor.get_limits(), mit_param)};
 }
 
 CANPacket CanPacketEncoder::create_posvel_control_command(const Motor& motor,
                                                           const PosVelParam& posvel_param) {
     // pos vel mode needs extra 0x100
     return {motor.get_send_can_id() + 0x100,
-            pack_posvel_control_data(motor.get_motor_type(), posvel_param)};
+        pack_posvel_control_data(motor.get_limits(), posvel_param)};
 }
 
 CANPacket CanPacketEncoder::create_posforce_control_command(const Motor& motor,
                                                             const PosForceParam& posforce_param) {
     // pos force mode needs extra 0x300
     return {motor.get_send_can_id() + 0x300,
-            pack_posforce_control_data(motor.get_motor_type(), posforce_param)};
+        pack_posforce_control_data(motor.get_limits(), posforce_param)};
 }
 
 CANPacket CanPacketEncoder::create_query_param_command(const Motor& motor, int RID) {
@@ -85,7 +85,7 @@ StateResult CanPacketDecoder::parse_motor_state_data(const Motor& motor,
         return {0, 0, 0, 0, 0, false};
     }
 
-    LimitParam limits = MOTOR_LIMIT_PARAMS[static_cast<int>(motor.get_motor_type())];
+    const LimitParam& limits = motor.get_limits();
 
     uint16_t q_uint;
     uint16_t dq_uint;
@@ -149,13 +149,11 @@ ParamResult CanPacketDecoder::parse_motor_param_data(const std::vector<uint8_t>&
 }
 
 // Data packing utility methods
-std::vector<uint8_t> CanPacketEncoder::pack_mit_control_data(MotorType motor_type,
+std::vector<uint8_t> CanPacketEncoder::pack_mit_control_data(const LimitParam& limits,
                                                              const MITParam& mit_param) {
     uint16_t kp_uint = double_to_uint(mit_param.kp, 0, 500, 12);
     uint16_t kd_uint = double_to_uint(mit_param.kd, 0, 5, 12);
 
-    // Get motor limits based on type
-    LimitParam limits = MOTOR_LIMIT_PARAMS[static_cast<int>(motor_type)];
     uint16_t q_uint = double_to_uint(mit_param.q, -(double)limits.pMax, (double)limits.pMax, 16);
     uint16_t dq_uint = double_to_uint(mit_param.dq, -(double)limits.vMax, (double)limits.vMax, 12);
     uint16_t tau_uint =
@@ -172,7 +170,8 @@ std::vector<uint8_t> CanPacketEncoder::pack_mit_control_data(MotorType motor_typ
 }
 
 std::vector<uint8_t> CanPacketEncoder::pack_posvel_control_data(
-    [[maybe_unused]] MotorType motor_type, const PosVelParam& posvel_param) {
+    [[maybe_unused]] const LimitParam& limits, const PosVelParam& posvel_param) {
+    (void)limits;
     double pos = posvel_param.q;
     double vel = posvel_param.dq;
 
@@ -184,8 +183,8 @@ std::vector<uint8_t> CanPacketEncoder::pack_posvel_control_data(
 }
 
 std::vector<uint8_t> CanPacketEncoder::pack_posforce_control_data(
-    MotorType motor_type, const PosForceParam& posforce_param) {
-    (void)motor_type;  // Currently unused; reserved for per-motor limits if needed.
+    const LimitParam& limits, const PosForceParam& posforce_param) {
+    (void)limits;  // Currently unused; reserved for per-motor limits if needed.
 
     // P_des: position command in rad (float).
     // V_des: speed limit in rad/s, scaled by 100 into uint16 (little-endian), range 0-10000

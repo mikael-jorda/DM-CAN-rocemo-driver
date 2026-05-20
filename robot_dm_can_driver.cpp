@@ -23,14 +23,13 @@
 namespace {
 
 using damiao_motor::Motor;
-using damiao_motor::MotorType;
+using damiao_motor::LimitParam;
 using damiao_motor::RID;
 using damiao_motor::StateResult;
 
 struct Config {
 	std::string iface = "can0";
 	bool use_fd = true;
-	MotorType motor_type = MotorType::DM4310;
 	uint32_t min_id = 1;
 	uint32_t max_id = 32;
 	uint32_t recv_offset = 0x10;
@@ -39,15 +38,7 @@ struct Config {
 	bool custom_firmware = false;  // 16-16-16 encoding instead of standard 16-12-12
 };
 
-const std::map<std::string, MotorType> kMotorTypeMap = {
-	{"DM3507", MotorType::DM3507},         {"DM4310", MotorType::DM4310},
-	{"DM4310_48V", MotorType::DM4310_48V}, {"DM4340", MotorType::DM4340},
-	{"DM4340_48V", MotorType::DM4340_48V}, {"DM6006", MotorType::DM6006},
-	{"DM8006", MotorType::DM8006},         {"DM8009", MotorType::DM8009},
-	{"DM10010L", MotorType::DM10010L},     {"DM10010", MotorType::DM10010},
-	{"DMH3510", MotorType::DMH3510},       {"DMH6215", MotorType::DMH6215},
-	{"DMG6220", MotorType::DMG6220},
-};
+constexpr LimitParam kProbeLimits{12.5, 30.0, 10.0};
 
 void print_usage(const char* prog) {
 	std::cout << "Usage: " << prog << " [options]\n\n"
@@ -56,14 +47,14 @@ void print_usage(const char* prog) {
 			  << "  --min-id <value>       Minimum motor ID to scan (default: 1)\n"
 			  << "  --max-id <value>       Maximum motor ID to scan (default: 32)\n"
 			  << "  --recv-offset <value>  recv_id = send_id + offset (default: 0x10)\n"
-			  << "  --motor-type <name>    Motor type (default: DM4310)\n"
 			  << "  --samples <n>          Number of state samples (default: 50)\n"
 			  << "  --interval-ms <n>      Interval between samples (default: 100)\n"
-			  << "  --no-fd                Use classic CAN instead of CAN-FD\n"		  
-			  << "  --custom-firmware      Use 16-16-16 state encoding (default: 16-12-12)\n"			  << "  --help                 Show this help\n\n"
+			  << "  --no-fd                Use classic CAN instead of CAN-FD\n"
+			  << "  --custom-firmware      Use 16-16-16 state encoding (default: 16-12-12)\n"
+			  << "  --help                 Show this help\n\n"
 			  << "Example:\n"
 			  << "  " << prog
-			  << " --iface can0 --min-id 1 --max-id 32 --motor-type DM4310 "
+			  << " --iface can0 --min-id 1 --max-id 32 "
 				 "--samples 100 --interval-ms 50\n";
 }
 
@@ -133,13 +124,6 @@ bool parse_args(int argc, char** argv, Config& cfg) {
 				std::cerr << "Invalid --recv-offset: " << value << "\n";
 				return false;
 			}
-		} else if (arg == "--motor-type") {
-			const auto it = kMotorTypeMap.find(value);
-			if (it == kMotorTypeMap.end()) {
-				std::cerr << "Invalid --motor-type: " << value << "\n";
-				return false;
-			}
-			cfg.motor_type = it->second;
 		} else if (arg == "--samples") {
 			if (!parse_i32(value, cfg.samples) || cfg.samples <= 0) {
 				std::cerr << "Invalid --samples: " << value << "\n";
@@ -164,102 +148,6 @@ bool parse_args(int argc, char** argv, Config& cfg) {
 	return true;
 }
 
-std::string rid_name(int r) {
-	switch (static_cast<RID>(r)) {
-		case RID::UV_Value:
-			return "UV_Value";
-		case RID::KT_Value:
-			return "KT_Value";
-		case RID::OT_Value:
-			return "OT_Value";
-		case RID::OC_Value:
-			return "OC_Value";
-		case RID::ACC:
-			return "ACC";
-		case RID::DEC:
-			return "DEC";
-		case RID::MAX_SPD:
-			return "MAX_SPD";
-		case RID::MST_ID:
-			return "MST_ID";
-		case RID::ESC_ID:
-			return "ESC_ID";
-		case RID::TIMEOUT:
-			return "TIMEOUT";
-		case RID::CTRL_MODE:
-			return "CTRL_MODE";
-		case RID::Damp:
-			return "Damp";
-		case RID::Inertia:
-			return "Inertia";
-		case RID::hw_ver:
-			return "hw_ver";
-		case RID::sw_ver:
-			return "sw_ver";
-		case RID::SN:
-			return "SN";
-		case RID::NPP:
-			return "NPP";
-		case RID::Rs:
-			return "Rs";
-		case RID::LS:
-			return "LS";
-		case RID::Flux:
-			return "Flux";
-		case RID::Gr:
-			return "Gr";
-		case RID::PMAX:
-			return "PMAX";
-		case RID::VMAX:
-			return "VMAX";
-		case RID::TMAX:
-			return "TMAX";
-		case RID::I_BW:
-			return "I_BW";
-		case RID::KP_ASR:
-			return "KP_ASR";
-		case RID::KI_ASR:
-			return "KI_ASR";
-		case RID::KP_APR:
-			return "KP_APR";
-		case RID::KI_APR:
-			return "KI_APR";
-		case RID::OV_Value:
-			return "OV_Value";
-		case RID::GREF:
-			return "GREF";
-		case RID::Deta:
-			return "Deta";
-		case RID::V_BW:
-			return "V_BW";
-		case RID::IQ_c1:
-			return "IQ_c1";
-		case RID::VL_c1:
-			return "VL_c1";
-		case RID::can_br:
-			return "can_br";
-		case RID::sub_ver:
-			return "sub_ver";
-		case RID::u_off:
-			return "u_off";
-		case RID::v_off:
-			return "v_off";
-		case RID::k1:
-			return "k1";
-		case RID::k2:
-			return "k2";
-		case RID::m_off:
-			return "m_off";
-		case RID::dir:
-			return "dir";
-		case RID::p_m:
-			return "p_m";
-		case RID::xout:
-			return "xout";
-		default:
-			return "RID_" + std::to_string(r);
-	}
-}
 
 bool data_matches_motor_id(const std::vector<uint8_t>& data, uint32_t send_id) {
 	if (data.size() < 2) return false;
@@ -364,23 +252,44 @@ std::optional<StateResult> read_state_sample(canbus::CANSocket& sock, bool use_f
 	return latest;
 }
 
-std::vector<Motor> scan_present_motors(canbus::CANSocket& can_socket,
-										   const Config& cfg) {
-	std::vector<Motor> motors;
-	motors.reserve(static_cast<size_t>(cfg.max_id - cfg.min_id + 1));
+std::vector<uint32_t> scan_present_motor_ids(canbus::CANSocket& can_socket, const Config& cfg) {
+	std::vector<uint32_t> motor_ids;
+	motor_ids.reserve(static_cast<size_t>(cfg.max_id - cfg.min_id + 1));
 
 	for (uint32_t send_id = cfg.min_id; send_id <= cfg.max_id; ++send_id) {
-		Motor candidate(cfg.motor_type, send_id, send_id + cfg.recv_offset);
+		Motor candidate(kProbeLimits, send_id, send_id + cfg.recv_offset);
 
 		// Probe a stable register first to identify active motors in the chain.
 		const auto probe = query_register_with_retry(
 			can_socket, cfg.use_fd, candidate, static_cast<int>(RID::MST_ID), 2);
 		if (probe.has_value()) {
-			motors.push_back(candidate);
+			motor_ids.push_back(send_id);
 		}
 	}
 
-	return motors;
+	return motor_ids;
+}
+
+std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, const Config& cfg,
+													  uint32_t send_id) {
+	Motor probe(kProbeLimits, send_id, send_id + cfg.recv_offset);
+
+	const auto pmax = query_register_with_retry(can_socket, cfg.use_fd, probe,
+														 static_cast<int>(RID::PMAX), 3);
+	const auto vmax = query_register_with_retry(can_socket, cfg.use_fd, probe,
+														 static_cast<int>(RID::VMAX), 3);
+	const auto tmax = query_register_with_retry(can_socket, cfg.use_fd, probe,
+														 static_cast<int>(RID::TMAX), 3);
+
+	if (!pmax.has_value() || !vmax.has_value() || !tmax.has_value()) {
+		return std::nullopt;
+	}
+
+	if (*pmax <= 0.0 || *vmax <= 0.0 || *tmax <= 0.0) {
+		return std::nullopt;
+	}
+
+	return LimitParam{*pmax, *vmax, *tmax};
 }
 
 }  // namespace
@@ -402,10 +311,27 @@ int main(int argc, char** argv) {
 				  << " fd=" << (cfg.use_fd ? "on" : "off") << "\n";
 
 		std::cout << "Scanning motor IDs...\n";
-		std::vector<Motor> motors = scan_present_motors(can_socket, cfg);
-		if (motors.empty()) {
+		const std::vector<uint32_t> detected_ids = scan_present_motor_ids(can_socket, cfg);
+		if (detected_ids.empty()) {
 			std::cout << "No motors responded in the scan range.\n";
 			return 0;
+		}
+
+		std::vector<Motor> motors;
+		motors.reserve(detected_ids.size());
+		for (uint32_t send_id : detected_ids) {
+			const auto limits = query_motor_limits(can_socket, cfg, send_id);
+			if (!limits.has_value()) {
+				std::cerr << "Failed to read PMAX/VMAX/TMAX for motor 0x" << std::hex << send_id
+						  << std::dec << ". Skipping this motor.\n";
+				continue;
+			}
+			motors.emplace_back(*limits, send_id, send_id + cfg.recv_offset);
+		}
+
+		if (motors.empty()) {
+			std::cerr << "No motors had valid PMAX/VMAX/TMAX limits. Aborting.\n";
+			return 1;
 		}
 
 		std::cout << "Detected motor IDs: ";
@@ -414,6 +340,12 @@ int main(int argc, char** argv) {
 			if (i + 1 < motors.size()) std::cout << ", ";
 		}
 		std::cout << "\n";
+		for (const auto& motor : motors) {
+			const auto& lim = motor.get_limits();
+			std::cout << "  motor 0x" << std::hex << motor.get_send_can_id() << std::dec
+					  << " limits: pmax=" << lim.pMax << " vmax=" << lim.vMax
+					  << " tmax=" << lim.tMax << "\n";
+		}
 		std::cout << "Firmware mode: "
 				  << (cfg.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
 
@@ -480,7 +412,7 @@ int main(int argc, char** argv) {
 					if (it == it_map->second.end()) continue;
 
 					std::cout << std::left << std::setw(12) << rid << std::setw(16)
-							  << rid_name(rid) << std::setprecision(12) << it->second << "\n";
+							  << damiao_motor::rid_name(rid) << std::setprecision(12) << it->second << "\n";
 					++printed;
 				}
 			}

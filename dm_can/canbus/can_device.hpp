@@ -20,7 +20,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace openarm::canbus {
+namespace canbus {
 // Abstract base class for CAN devices
 class CANDevice {
 public:
@@ -47,4 +47,4 @@ protected:
     canid_t recv_can_mask_ = CAN_SFF_MASK;
     bool is_fd_enabled_ = false;
 };
-}  // namespace openarm::canbus
+}  // namespace canbus

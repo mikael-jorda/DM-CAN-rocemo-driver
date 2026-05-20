@@ -15,26 +15,11 @@
 #pragma once
 
 #include <array>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 
 namespace damiao_motor {
-enum class MotorType : uint8_t {
-    DM3507 = 0,
-    DM4310 = 1,
-    DM4310_48V = 2,
-    DM4340 = 3,
-    DM4340_48V = 4,
-    DM6006 = 5,
-    DM8006 = 6,
-    DM8009 = 7,
-    DM10010L = 8,
-    DM10010 = 9,
-    DMH3510 = 10,
-    DMH6215 = 11,
-    DMG6220 = 12,
-    COUNT = 13
-};
 
 enum class ControlMode : uint8_t { MIT = 1, POS_VEL = 2, VEL = 3, POS_FORCE = 4 };
 
@@ -87,27 +72,149 @@ enum class RID : uint8_t {
     COUNT = 82
 };
 
+inline std::string rid_name(RID r) {
+    switch (r) {
+        case RID::UV_Value:
+            return "UV_Value";
+        case RID::KT_Value:
+            return "KT_Value";
+        case RID::OT_Value:
+            return "OT_Value";
+        case RID::OC_Value:
+            return "OC_Value";
+        case RID::ACC:
+            return "ACC";
+        case RID::DEC:
+            return "DEC";
+        case RID::MAX_SPD:
+            return "MAX_SPD";
+        case RID::MST_ID:
+            return "MST_ID";
+        case RID::ESC_ID:
+            return "ESC_ID";
+        case RID::TIMEOUT:
+            return "TIMEOUT";
+        case RID::CTRL_MODE:
+            return "CTRL_MODE";
+        case RID::Damp:
+            return "Damp";
+        case RID::Inertia:
+            return "Inertia";
+        case RID::hw_ver:
+            return "hw_ver";
+        case RID::sw_ver:
+            return "sw_ver";
+        case RID::SN:
+            return "SN";
+        case RID::NPP:
+            return "NPP";
+        case RID::Rs:
+            return "Rs";
+        case RID::LS:
+            return "LS";
+        case RID::Flux:
+            return "Flux";
+        case RID::Gr:
+            return "Gr";
+        case RID::PMAX:
+            return "PMAX";
+        case RID::VMAX:
+            return "VMAX";
+        case RID::TMAX:
+            return "TMAX";
+        case RID::I_BW:
+            return "I_BW";
+        case RID::KP_ASR:
+            return "KP_ASR";
+        case RID::KI_ASR:
+            return "KI_ASR";
+        case RID::KP_APR:
+            return "KP_APR";
+        case RID::KI_APR:
+            return "KI_APR";
+        case RID::OV_Value:
+            return "OV_Value";
+        case RID::GREF:
+            return "GREF";
+        case RID::Deta:
+            return "Deta";
+        case RID::V_BW:
+            return "V_BW";
+        case RID::IQ_c1:
+            return "IQ_c1";
+        case RID::VL_c1:
+            return "VL_c1";
+        case RID::can_br:
+            return "can_br";
+        case RID::sub_ver:
+            return "sub_ver";
+        case RID::u_off:
+            return "u_off";
+        case RID::v_off:
+            return "v_off";
+        case RID::k1:
+            return "k1";
+        case RID::k2:
+            return "k2";
+        case RID::m_off:
+            return "m_off";
+        case RID::dir:
+            return "dir";
+        case RID::p_m:
+            return "p_m";
+        case RID::xout:
+            return "xout";
+        case RID::COUNT:
+            return "COUNT";
+        default:
+            return "RID_" + std::to_string(static_cast<int>(r));
+    }
+}
+
+inline std::string rid_name(int r) {
+    return rid_name(static_cast<RID>(r));
+}
+
 // Limit parameters structure for different motor types
 struct LimitParam {
     double pMax;  // Position limit (rad)
     double vMax;  // Velocity limit (rad/s)
     double tMax;  // Torque limit (Nm)
 };
-// Limit parameters for each motor type [pMax, vMax, tMax]
-inline constexpr std::array<LimitParam, static_cast<std::size_t>(MotorType::COUNT)>
-    MOTOR_LIMIT_PARAMS = {{
-        {12.5, 50, 5},    // DM3507
-        {12.5, 30, 10},   // DM4310
-        {12.5, 50, 10},   // DM4310_48V
-        {12.5, 8, 28},    // DM4340
-        {12.5, 10, 28},   // DM4340_48V
-        {12.5, 45, 20},   // DM6006
-        {12.5, 45, 40},   // DM8006
-        {12.5, 45, 54},   // DM8009
-        {12.5, 25, 200},  // DM10010L
-        {12.5, 20, 200},  // DM10010
-        {12.5, 280, 1},   // DMH3510
-        {12.5, 45, 10},   // DMH6215
-        {12.5, 45, 10}    // DMG6220
-    }};
+
+// Obsolete
+// enum class MotorType : uint8_t {
+//     DM3507 = 0,
+//     DM4310 = 1,
+//     DM4310_48V = 2,
+//     DM4340 = 3,
+//     DM4340_48V = 4,
+//     DM6006 = 5,
+//     DM8006 = 6,
+//     DM8009 = 7,
+//     DM10010L = 8,
+//     DM10010 = 9,
+//     DMH3510 = 10,
+//     DMH6215 = 11,
+//     DMG6220 = 12,
+//     COUNT = 13
+// };
+
+// // Limit parameters for each motor type [pMax, vMax, tMax]
+// inline constexpr std::array<LimitParam, static_cast<std::size_t>(MotorType::COUNT)>
+//     MOTOR_LIMIT_PARAMS = {{
+//         {12.5, 50, 5},    // DM3507
+//         {12.5, 30, 10},   // DM4310
+//         {12.5, 50, 10},   // DM4310_48V
+//         {12.5, 8, 28},    // DM4340
+//         {12.5, 10, 28},   // DM4340_48V
+//         {12.5, 45, 20},   // DM6006
+//         {12.5, 45, 40},   // DM8006
+//         {12.5, 45, 54},   // DM8009
+//         {12.5, 25, 200},  // DM10010L
+//         {12.5, 20, 200},  // DM10010
+//         {12.5, 280, 1},   // DMH3510
+//         {12.5, 45, 10},   // DMH6215
+//         {12.5, 45, 10}    // DMG6220
+//     }};
 }  // namespace damiao_motor

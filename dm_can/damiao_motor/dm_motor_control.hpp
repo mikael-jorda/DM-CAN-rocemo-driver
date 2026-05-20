@@ -82,11 +82,11 @@ public:
     static CANPacket create_refresh_command(const Motor& motor);
 
 private:
-    static std::vector<uint8_t> pack_mit_control_data(MotorType motor_type,
+    static std::vector<uint8_t> pack_mit_control_data(const LimitParam& limits,
                                                       const MITParam& mit_param);
-    static std::vector<uint8_t> pack_posvel_control_data(MotorType motor_type,
+    static std::vector<uint8_t> pack_posvel_control_data(const LimitParam& limits,
                                                          const PosVelParam& posvel_param);
-    static std::vector<uint8_t> pack_posforce_control_data(MotorType motor_type,
+    static std::vector<uint8_t> pack_posforce_control_data(const LimitParam& limits,
                                                            const PosForceParam& posforce_param);
 
     /**
