@@ -4,6 +4,16 @@ project(robot_dm_can_driver LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Include glaze
+include(FetchContent)
+    FetchContent_Declare(
+  glaze
+  GIT_REPOSITORY https://github.com/stephenberry/glaze.git
+  GIT_TAG v5.2.0
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(glaze)
+
 find_package(Threads REQUIRED)
 
 add_library(dm_can_core STATIC
@@ -17,7 +27,7 @@ target_include_directories(dm_can_core
         ${CMAKE_CURRENT_SOURCE_DIR}/dm_can
 )
 
-target_link_libraries(dm_can_core PUBLIC Threads::Threads)
+target_link_libraries(dm_can_core PUBLIC Threads::Threads glaze::glaze)
 
 add_executable(robot_dm_driver
     robot_dm_can_driver.cpp

@@ -20,6 +20,9 @@
 #include <damiao_motor/dm_motor_constants.hpp>
 #include <damiao_motor/dm_motor_control.hpp>
 
+#include "config/config_structs.hpp"
+#include <glaze/glaze.hpp>
+
 namespace {
 
 using damiao_motor::Motor;
@@ -27,62 +30,20 @@ using damiao_motor::LimitParam;
 using damiao_motor::RID;
 using damiao_motor::StateResult;
 
-struct Config {
-	std::string iface = "can0";
-	bool use_fd = true;
-	uint32_t min_id = 1;
-	uint32_t max_id = 32;
-	uint32_t recv_offset = 0x10;
-	int samples = 50;
-	int interval_ms = 100;
-	bool custom_firmware = false;  // 16-16-16 encoding instead of standard 16-12-12
-};
-
 constexpr LimitParam kProbeLimits{12.5, 30.0, 10.0};
 
 void print_usage(const char* prog) {
-	std::cout << "Usage: " << prog << " [options]\n\n"
+	std::cout << "Usage: " << prog << " [-c|--config <config_path>]\n\n"
 			  << "Options:\n"
-			  << "  --iface <name>         CAN interface (default: can0)\n"
-			  << "  --min-id <value>       Minimum motor ID to scan (default: 1)\n"
-			  << "  --max-id <value>       Maximum motor ID to scan (default: 32)\n"
-			  << "  --recv-offset <value>  recv_id = send_id + offset (default: 0x10)\n"
-			  << "  --samples <n>          Number of state samples (default: 50)\n"
-			  << "  --interval-ms <n>      Interval between samples (default: 100)\n"
-			  << "  --no-fd                Use classic CAN instead of CAN-FD\n"
-			  << "  --custom-firmware      Use 16-16-16 state encoding (default: 16-12-12)\n"
-			  << "  --help                 Show this help\n\n"
+			  << "  -c, --config <path>   Path to config file (default: config/default_config.json)\n"
+			  << "  --help                Show this help\n\n"
 			  << "Example:\n"
-			  << "  " << prog
-			  << " --iface can0 --min-id 1 --max-id 32 "
-				 "--samples 100 --interval-ms 50\n";
+			  << "  " << prog << " -c config/default_config.json\n";
 }
 
-bool parse_u32(const std::string& s, uint32_t& out) {
-	try {
-		size_t idx = 0;
-		const unsigned long v = std::stoul(s, &idx, 0);
-		if (idx != s.size()) return false;
-		out = static_cast<uint32_t>(v);
-		return true;
-	} catch (...) {
-		return false;
-	}
-}
+bool parse_config(int argc, char** argv, DMCanRobotDriverConfig& cfg) {
+	std::optional<std::string> config_file_path;
 
-bool parse_i32(const std::string& s, int& out) {
-	try {
-		size_t idx = 0;
-		const int v = std::stoi(s, &idx, 0);
-		if (idx != s.size()) return false;
-		out = v;
-		return true;
-	} catch (...) {
-		return false;
-	}
-}
-
-bool parse_args(int argc, char** argv, Config& cfg) {
 	for (int i = 1; i < argc; ++i) {
 		const std::string arg = argv[i];
 
@@ -91,14 +52,9 @@ bool parse_args(int argc, char** argv, Config& cfg) {
 			return false;
 		}
 
-		if (arg == "--no-fd") {
-			cfg.use_fd = false;
-			continue;
-		}
-
-		if (arg == "--custom-firmware") {
-			cfg.custom_firmware = true;
-			continue;
+		if (arg != "--config" && arg != "-c") {
+			std::cerr << "Unknown argument: " << arg << "\n";
+			return false;
 		}
 
 		if (i + 1 >= argc) {
@@ -106,42 +62,24 @@ bool parse_args(int argc, char** argv, Config& cfg) {
 			return false;
 		}
 
-		const std::string value = argv[++i];
-		if (arg == "--iface") {
-			cfg.iface = value;
-		} else if (arg == "--min-id") {
-			if (!parse_u32(value, cfg.min_id) || cfg.min_id == 0) {
-				std::cerr << "Invalid --min-id: " << value << "\n";
-				return false;
-			}
-		} else if (arg == "--max-id") {
-			if (!parse_u32(value, cfg.max_id) || cfg.max_id == 0) {
-				std::cerr << "Invalid --max-id: " << value << "\n";
-				return false;
-			}
-		} else if (arg == "--recv-offset") {
-			if (!parse_u32(value, cfg.recv_offset)) {
-				std::cerr << "Invalid --recv-offset: " << value << "\n";
-				return false;
-			}
-		} else if (arg == "--samples") {
-			if (!parse_i32(value, cfg.samples) || cfg.samples <= 0) {
-				std::cerr << "Invalid --samples: " << value << "\n";
-				return false;
-			}
-		} else if (arg == "--interval-ms") {
-			if (!parse_i32(value, cfg.interval_ms) || cfg.interval_ms < 0) {
-				std::cerr << "Invalid --interval-ms: " << value << "\n";
-				return false;
-			}
-		} else {
-			std::cerr << "Unknown argument: " << arg << "\n";
+		config_file_path = argv[++i];
+	}
+
+	if (config_file_path.has_value()) {
+		std::string buffer;
+		auto ec = glz::read_file_json(cfg, *config_file_path, buffer);
+		if (ec) {
+			std::cerr << "Failed to parse JSON config: " << *config_file_path << "\n";
+			const std::string formatted = glz::format_error(ec, buffer);
+			std::cerr << formatted << std::endl;
 			return false;
 		}
+	} else {
+		std::cout << "No -c/--config provided. Using default config values from config_structs.hpp\n";
 	}
 
 	if (cfg.min_id > cfg.max_id) {
-		std::cerr << "Invalid range: --min-id must be <= --max-id\n";
+		std::cerr << "Invalid config: min_id must be <= max_id\n";
 		return false;
 	}
 
@@ -252,7 +190,7 @@ std::optional<StateResult> read_state_sample(canbus::CANSocket& sock, bool use_f
 	return latest;
 }
 
-std::vector<uint32_t> scan_present_motor_ids(canbus::CANSocket& can_socket, const Config& cfg) {
+std::vector<uint32_t> scan_present_motor_ids(canbus::CANSocket& can_socket, const DMCanRobotDriverConfig& cfg) {
 	std::vector<uint32_t> motor_ids;
 	motor_ids.reserve(static_cast<size_t>(cfg.max_id - cfg.min_id + 1));
 
@@ -270,7 +208,7 @@ std::vector<uint32_t> scan_present_motor_ids(canbus::CANSocket& can_socket, cons
 	return motor_ids;
 }
 
-std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, const Config& cfg,
+std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, const DMCanRobotDriverConfig& cfg,
 													  uint32_t send_id) {
 	Motor probe(kProbeLimits, send_id, send_id + cfg.recv_offset);
 
@@ -295,8 +233,8 @@ std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, cons
 }  // namespace
 
 int main(int argc, char** argv) {
-	Config cfg;
-	if (!parse_args(argc, argv, cfg)) {
+	DMCanRobotDriverConfig cfg;
+	if (!parse_config(argc, argv, cfg)) {
 		if (argc > 1 && std::string(argv[1]) == "--help") {
 			return 0;
 		}
