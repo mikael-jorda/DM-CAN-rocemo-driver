@@ -1,26 +1,9 @@
-#include <algorithm>
 #include <chrono>
-#include <cctype>
-#include <cstdint>
-#include <exception>
-#include <iomanip>
 #include <iostream>
-#include <map>
-#include <optional>
-#include <sstream>
-#include <string>
 #include <thread>
 #include <vector>
 #include <signal.h>
 
-#include <linux/can.h>
-#include <linux/can/raw.h>
-
-#include <canbus/can_socket.hpp>
-#include <damiao_motor/dm_motor.hpp>
-#include <damiao_motor/dm_motor_constants.hpp>
-#include <damiao_motor/dm_motor_control.hpp>
-#include <damiao_motor/dm_motor_device.hpp>
 #include <damiao_motor/dm_motor_device_collection.hpp>
 
 #include "config/config_structs.hpp"
@@ -39,7 +22,6 @@ void signal_handler(int signal) {
 using damiao_motor::Motor;
 using damiao_motor::LimitParam;
 using damiao_motor::RID;
-using damiao_motor::StateResult;
 
 constexpr LimitParam kProbeLimits{12.5, 30.0, 10.0};
 
@@ -89,8 +71,8 @@ bool parse_config(int argc, char** argv, DMCanRobotDriverConfig& cfg) {
 		std::cout << "No -c/--config provided. Using default config values from config_structs.hpp\n";
 	}
 
-	if (cfg.min_id > cfg.max_id) {
-		std::cerr << "Invalid config: min_id must be <= max_id\n";
+	if (cfg.first_can_id > cfg.last_can_id) {
+		std::cerr << "Invalid config: first_can_id must be <= last_can_id\n";
 		return false;
 	}
 
@@ -170,41 +152,10 @@ std::optional<double> query_register_with_retry(canbus::CANSocket& sock, bool us
 	return std::nullopt;
 }
 
-std::optional<StateResult> read_state_sample(canbus::CANSocket& sock, bool use_fd,
-											 const Motor& motor, bool custom_firmware = false) {
-	using damiao_motor::CanPacketDecoder;
-	using damiao_motor::CanPacketEncoder;
-
-	send_packet(sock, use_fd, CanPacketEncoder::create_refresh_command(motor));
-
-	std::optional<StateResult> latest;
-	for (int spin = 0; spin < 20; ++spin) {
-		if (!sock.is_data_available(2000)) continue;
-
-		std::vector<uint8_t> data;
-		canid_t can_id = 0;
-		if (!recv_one_frame(sock, use_fd, data, can_id)) continue;
-
-		if (data.size() < 8) continue;
-
-		const uint8_t payload_motor_id = data[0] & 0x0F;
-		if (payload_motor_id != static_cast<uint8_t>(motor.get_send_can_id() & 0x0F)) continue;
-
-		const auto parsed = CanPacketDecoder::parse_motor_state_data(motor, data, custom_firmware);
-		if (parsed.valid) {
-			latest = parsed;
-		}
-
-		(void)can_id;
-	}
-
-	return latest;
-}
-
-void recv_all(canbus::CANSocket& can_socket,
-			  canbus::CANDeviceCollection& device_collection,
-			  bool use_fd,
-			  int first_timeout_us = 200) {
+void receive_all_can_replies(canbus::CANSocket& can_socket,
+					canbus::CANDeviceCollection& device_collection,
+					bool use_fd,
+					int first_timeout_us = 200) {
 	int timeout_us = first_timeout_us;
 
 	if (use_fd) {
@@ -222,24 +173,6 @@ void recv_all(canbus::CANSocket& can_socket,
 			timeout_us = 0;
 		}
 	}
-}
-
-std::vector<uint32_t> scan_present_motor_ids(canbus::CANSocket& can_socket, const DMCanRobotDriverConfig& cfg) {
-	std::vector<uint32_t> motor_ids;
-	motor_ids.reserve(static_cast<size_t>(cfg.max_id - cfg.min_id + 1));
-
-	for (uint32_t send_id = cfg.min_id; send_id <= cfg.max_id; ++send_id) {
-		Motor candidate(kProbeLimits, send_id, send_id + cfg.recv_offset);
-
-		// Probe a stable register first to identify active motors in the chain.
-		const auto probe = query_register_with_retry(
-			can_socket, cfg.use_fd, candidate, static_cast<int>(RID::MST_ID), 2);
-		if (probe.has_value()) {
-			motor_ids.push_back(send_id);
-		}
-	}
-
-	return motor_ids;
 }
 
 std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, const DMCanRobotDriverConfig& cfg,
@@ -267,6 +200,7 @@ std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, cons
 }  // namespace
 
 int main(int argc, char** argv) {
+	// parse config
 	DMCanRobotDriverConfig cfg;
 	if (!parse_config(argc, argv, cfg)) {
 		if (argc > 1 && std::string(argv[1]) == "--help") {
@@ -276,38 +210,32 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	// setup signal handlers for graceful shutdown
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
 	signal(SIGABRT, signal_handler);
 
 	try {
 		canbus::CANSocket can_socket(cfg.iface, cfg.use_fd);
-		std::cout << "Connected. iface=" << cfg.iface << " scan_range=[" << cfg.min_id << ", "
-				  << cfg.max_id << "] recv_offset=0x" << std::hex << cfg.recv_offset << std::dec
+		std::cout << "Connected. iface=" << cfg.iface << " scan_range=[" << cfg.first_can_id << ", "
+				  << cfg.last_can_id << "] recv_offset=0x" << std::hex << cfg.recv_offset << std::dec
 				  << " fd=" << (cfg.use_fd ? "on" : "off") << "\n";
 
 		std::cout << "Scanning motor IDs...\n";
-		const std::vector<uint32_t> detected_ids = scan_present_motor_ids(can_socket, cfg);
-		if (detected_ids.empty()) {
-			std::cout << "No motors responded in the scan range.\n";
-			return 0;
-		}
-
 		std::vector<Motor> motors;
-		motors.reserve(detected_ids.size());
-		for (uint32_t send_id : detected_ids) {
+		motors.reserve(static_cast<size_t>(cfg.last_can_id - cfg.first_can_id + 1));
+		for (uint32_t send_id = cfg.first_can_id; send_id <= cfg.last_can_id; ++send_id) {
 			const auto limits = query_motor_limits(can_socket, cfg, send_id);
 			if (!limits.has_value()) {
-				std::cerr << "Failed to read PMAX/VMAX/TMAX for motor 0x" << std::hex << send_id
-						  << std::dec << ". Skipping this motor.\n";
+				// No valid limits response means no motor (or no response) at this ID.
 				continue;
 			}
 			motors.emplace_back(*limits, send_id, send_id + cfg.recv_offset);
 		}
 
 		if (motors.empty()) {
-			std::cerr << "No motors had valid PMAX/VMAX/TMAX limits. Aborting.\n";
-			return 1;
+			std::cout << "No motors responded with valid PMAX/VMAX/TMAX in the scan range.\n";
+			return 0;
 		}
 
 		damiao_motor::DMDeviceCollection dm_collection(can_socket);
@@ -337,90 +265,35 @@ int main(int argc, char** argv) {
 				  << (cfg.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
 
 		// --- Firmware sanity check ---
-		// Enable motors briefly to get a state reply, then verify that torque
-		// reads back as (near) zero at rest. A non-zero torque strongly suggests
-		// the chosen firmware encoding does not match what the motor is running.
-		for (const auto& motor : motors) {
-			send_packet(can_socket, cfg.use_fd,
-						damiao_motor::CanPacketEncoder::create_enable_command(motor));
-		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		dm_collection.enable_all();
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 2000);
+		dm_collection.refresh_all();
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 2000);
 
 		constexpr double kTorqueSanityThreshold = 1.0;  // Nm; firmware mismatch causes large garbage
 		bool firmware_ok = true;
 		for (const auto& motor : motors) {
-			const auto state = read_state_sample(can_socket, cfg.use_fd, motor, cfg.custom_firmware);
-			if (!state.has_value()) continue;
-			if (std::abs(state->torque) > kTorqueSanityThreshold) {
+			if (std::abs(motor.get_torque()) > kTorqueSanityThreshold) {
 				std::cerr << "[FIRMWARE MISMATCH] Motor 0x" << std::hex
 						  << motor.get_send_can_id() << std::dec
-						  << " reported torque=" << state->torque
+						  << " reported torque=" << motor.get_torque()
 						  << " Nm at rest (threshold: " << kTorqueSanityThreshold << " Nm).\n"
 						  << "  Expected firmware: "
 						  << (cfg.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)")
 						  << ".\n"
 						  << "  Try toggling --custom-firmware.\n";
 				firmware_ok = false;
+				break;
 			}
 		}
 		if (!firmware_ok) {
-			for (const auto& motor : motors) {
-				send_packet(can_socket, cfg.use_fd,
-							damiao_motor::CanPacketEncoder::create_disable_command(motor));
-			}
+			dm_collection.disable_all();
+			receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 1000);
 			return 1;
 		}
 
-		std::map<uint32_t, std::map<int, double>> register_values;
-
-		// Query all known register IDs for each motor in the chain.
-		for (const auto& motor : motors) {
-			for (int rid = 0; rid < static_cast<int>(RID::COUNT); ++rid) {
-				const auto val = query_register_with_retry(can_socket, cfg.use_fd, motor, rid);
-				if (val.has_value()) {
-					register_values[motor.get_send_can_id()][rid] = *val;
-				}
-			}
-		}
-
-		std::cout << "\n=== Register values that responded ===\n";
-		for (const auto& motor : motors) {
-			const uint32_t send_id = motor.get_send_can_id();
-			std::cout << "\nMotor send_id=0x" << std::hex << send_id << std::dec << "\n";
-			std::cout << std::left << std::setw(12) << "RID" << std::setw(16) << "Name"
-					  << "Value\n";
-			std::cout << "------------------------------------------------\n";
-
-			int printed = 0;
-			const auto it_map = register_values.find(send_id);
-			if (it_map != register_values.end()) {
-				for (int rid = 0; rid < static_cast<int>(RID::COUNT); ++rid) {
-					const auto it = it_map->second.find(rid);
-					if (it == it_map->second.end()) continue;
-
-					std::cout << std::left << std::setw(12) << rid << std::setw(16)
-							  << damiao_motor::rid_name(rid) << std::setprecision(12) << it->second << "\n";
-					++printed;
-				}
-			}
-
-			if (printed == 0) {
-				std::cout << "No register response for this motor.\n";
-			}
-		}
-
-		for (const auto& motor : motors) {
-			send_packet(can_socket, cfg.use_fd,
-						damiao_motor::CanPacketEncoder::create_enable_command(motor));
-		}
-		// Motors were already enabled by the firmware check; this re-enables
-		// any that may have been left disabled after the sanity check pass.
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-		std::cout << "\n=== Live state (position / velocity / torque) ===\n";
-		std::cout << std::left << std::setw(10) << "MotorID" << std::setw(14) << "Pos(rad)"
-				  << std::setw(14) << "Vel(rad/s)" << std::setw(14) << "Tau(Nm)"
-				  << std::setw(8) << "Tmos" << "Trotor\n";
+		dm_collection.enable_all();
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 1000);
 
 		const damiao_motor::MITParam mit_zero{0.0, 0.0, 0.0, 0.0, 0.0};
 		std::vector<damiao_motor::MITParam> mit_zeros(motors.size(), mit_zero);
@@ -437,7 +310,7 @@ int main(int argc, char** argv) {
 			// Broadcast zero MIT command to all motors.
 			// DM motors reply with state to control commands, so no explicit refresh here.
 			dm_collection.mit_control_all(mit_zeros);
-			recv_all(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 200);
+			receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 200);
 
 			if (counter % kPrintEvery == 0) {
 				std::cout << "\nSample " << counter << "\n";
@@ -464,11 +337,8 @@ int main(int argc, char** argv) {
 		std::cout << "Elapsed time: " << elapsed.count() << " seconds\n";
 		std::cout << "running frequency: " << (counter / elapsed.count()) << " Hz\n";
 
-		for (const auto& motor : motors) {
-			send_packet(can_socket, cfg.use_fd,
-						damiao_motor::CanPacketEncoder::create_disable_command(motor));
-		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		dm_collection.disable_all();
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 1000);
 
 	} catch (const std::exception& e) {
 		std::cerr << "Error: " << e.what() << "\n";
