@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <signal.h>
 
 #include <linux/can.h>
 #include <linux/can/raw.h>
@@ -27,6 +28,14 @@
 #include <glaze/glaze.hpp>
 
 namespace {
+
+bool runloop = true;
+void signal_handler(int signal) {
+	if (signal == SIGINT) {
+		std::cout << "SIGINT received, exiting...\n";
+		runloop = false;
+	}
+}
 
 using damiao_motor::Motor;
 using damiao_motor::LimitParam;
@@ -270,6 +279,10 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	signal(SIGINT, signal_handler);
+	signal(SIGTERM, signal_handler);
+	signal(SIGABRT, signal_handler);
+
 	try {
 		canbus::CANSocket can_socket(cfg.iface, cfg.use_fd);
 		std::cout << "Connected. iface=" << cfg.iface << " scan_range=[" << cfg.min_id << ", "
@@ -415,13 +428,17 @@ int main(int argc, char** argv) {
 		const damiao_motor::MITParam mit_zero{0.0, 0.0, 0.0, 0.0, 0.0};
 		std::vector<damiao_motor::MITParam> mit_zeros(motors.size(), mit_zero);
 
-		for (int i = 0; i < cfg.samples; ++i) {
+		unsigned long long counter = 0;
+
+		auto t_start = std::chrono::high_resolution_clock::now();
+
+		while (runloop) {
 			// Broadcast zero MIT command to all motors, then refresh and collect replies.
 			dm_collection.mit_control_all(mit_zeros);
-			dm_collection.refresh_all();
+			// dm_collection.refresh_all();
 			collect_state_batch(can_socket, dm_collection, motors.size(), cfg.use_fd);
 
-			std::cout << "\nSample " << i << "\n";
+			std::cout << "\nSample " << counter << "\n";
 			std::cout << "-----------------------------------------------\n";
 			for (size_t m = 0; m < motors.size(); ++m) {
 				const auto& motor = motors[m];
@@ -435,10 +452,16 @@ int main(int argc, char** argv) {
 			}
 			std::cout << "\n";
 
-			if (cfg.interval_ms > 0) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(cfg.interval_ms));
-			}
+			// if (cfg.interval_ms > 0) {
+			// 	std::this_thread::sleep_for(std::chrono::milliseconds(cfg.interval_ms));
+			// }
+			++counter;
 		}
+
+		auto t_end = std::chrono::high_resolution_clock::now();
+		std::chrono::duration<double> elapsed = t_end - t_start;
+		std::cout << "Elapsed time: " << elapsed.count() << " seconds\n";
+		std::cout << "running frequency: " << (counter / elapsed.count()) << " Hz\n";
 
 		for (const auto& motor : motors) {
 			send_packet(can_socket, cfg.use_fd,

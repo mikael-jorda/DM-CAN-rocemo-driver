@@ -1,7 +1,6 @@
 {
 	"iface": "can0",
 	"use_fd": true,
-	"samples": 50,
 	"interval_ms": 100,
 	"custom_firmware": true
 }
