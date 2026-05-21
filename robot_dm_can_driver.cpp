@@ -8,8 +8,28 @@
 
 #include "config/config_structs.hpp"
 #include <glaze/glaze.hpp>
+#include "redis/RedisClient.hpp"
 
 namespace {
+
+struct RedisSendData {
+	std::vector<double> joint_positions;
+	std::vector<double> joint_velocities;
+	std::vector<double> joint_torques;
+};
+
+std::string getJointPosKey(const std::string& robot_name) {
+	return "/rocemo/" + robot_name + "/sensors/joint_positions";
+}
+std::string getJointVelKey(const std::string& robot_name) {
+	return "/rocemo/" + robot_name + "/sensors/joint_velocities";
+}
+std::string getTorqueCommandKey(const std::string& robot_name) {
+	return "/rocemo/" + robot_name + "/commands/joint_torques";
+}
+std::string getSensedTorquesKey(const std::string& robot_name) {
+	return "/rocemo/" + robot_name + "/sensors/joint_torques";
+}
 
 volatile sig_atomic_t runloop = 1;
 void signal_handler(int signal) {
@@ -34,7 +54,7 @@ void print_usage(const char* prog) {
 			  << "  " << prog << " -c config/custom_config.json\n";
 }
 
-bool parse_config(int argc, char** argv, DMCanRobotDriverConfig& cfg) {
+bool parse_config(int argc, char** argv, DMCanRobotDriverConfig& config) {
 	std::optional<std::string> config_file_path;
 
 	for (int i = 1; i < argc; ++i) {
@@ -60,7 +80,7 @@ bool parse_config(int argc, char** argv, DMCanRobotDriverConfig& cfg) {
 
 	if (config_file_path.has_value()) {
 		std::string buffer;
-		auto ec = glz::read_file_json(cfg, *config_file_path, buffer);
+		auto ec = glz::read_file_json(config, *config_file_path, buffer);
 		if (ec) {
 			std::cerr << "Failed to parse JSON config: " << *config_file_path << "\n";
 			const std::string formatted = glz::format_error(ec, buffer);
@@ -71,7 +91,7 @@ bool parse_config(int argc, char** argv, DMCanRobotDriverConfig& cfg) {
 		std::cout << "No -c/--config provided. Using default config values from config_structs.hpp\n";
 	}
 
-	if (cfg.first_can_id > cfg.last_can_id) {
+	if (config.first_can_id > config.last_can_id) {
 		std::cerr << "Invalid config: first_can_id must be <= last_can_id\n";
 		return false;
 	}
@@ -175,15 +195,15 @@ void receive_all_can_replies(canbus::CANSocket& can_socket,
 	}
 }
 
-std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, const DMCanRobotDriverConfig& cfg,
+std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, const DMCanRobotDriverConfig& config,
 													  uint32_t send_id) {
-	Motor probe(kProbeLimits, send_id, send_id + cfg.recv_offset);
+	Motor probe(kProbeLimits, send_id, send_id + config.recv_offset);
 
-	const auto pmax = query_register_with_retry(can_socket, cfg.use_fd, probe,
+	const auto pmax = query_register_with_retry(can_socket, config.use_fd, probe,
 														 static_cast<int>(RID::PMAX), 3);
-	const auto vmax = query_register_with_retry(can_socket, cfg.use_fd, probe,
+	const auto vmax = query_register_with_retry(can_socket, config.use_fd, probe,
 														 static_cast<int>(RID::VMAX), 3);
-	const auto tmax = query_register_with_retry(can_socket, cfg.use_fd, probe,
+	const auto tmax = query_register_with_retry(can_socket, config.use_fd, probe,
 														 static_cast<int>(RID::TMAX), 3);
 
 	if (!pmax.has_value() || !vmax.has_value() || !tmax.has_value()) {
@@ -201,8 +221,8 @@ std::optional<LimitParam> query_motor_limits(canbus::CANSocket& can_socket, cons
 
 int main(int argc, char** argv) {
 	// parse config
-	DMCanRobotDriverConfig cfg;
-	if (!parse_config(argc, argv, cfg)) {
+	DMCanRobotDriverConfig config;
+	if (!parse_config(argc, argv, config)) {
 		if (argc > 1 && std::string(argv[1]) == "--help") {
 			return 0;
 		}
@@ -216,21 +236,21 @@ int main(int argc, char** argv) {
 	signal(SIGABRT, signal_handler);
 
 	try {
-		canbus::CANSocket can_socket(cfg.iface, cfg.use_fd);
-		std::cout << "Connected. iface=" << cfg.iface << " scan_range=[" << cfg.first_can_id << ", "
-				  << cfg.last_can_id << "] recv_offset=0x" << std::hex << cfg.recv_offset << std::dec
-				  << " fd=" << (cfg.use_fd ? "on" : "off") << "\n";
+		canbus::CANSocket can_socket(config.iface, config.use_fd);
+		std::cout << "Connected. iface=" << config.iface << " scan_range=[" << config.first_can_id << ", "
+				  << config.last_can_id << "] recv_offset=0x" << std::hex << config.recv_offset << std::dec
+				  << " fd=" << (config.use_fd ? "on" : "off") << "\n";
 
 		std::cout << "Scanning motor IDs...\n";
 		std::vector<Motor> motors;
-		motors.reserve(static_cast<size_t>(cfg.last_can_id - cfg.first_can_id + 1));
-		for (uint32_t send_id = cfg.first_can_id; send_id <= cfg.last_can_id; ++send_id) {
-			const auto limits = query_motor_limits(can_socket, cfg, send_id);
+		motors.reserve(static_cast<size_t>(config.last_can_id - config.first_can_id + 1));
+		for (uint32_t send_id = config.first_can_id; send_id <= config.last_can_id; ++send_id) {
+			const auto limits = query_motor_limits(can_socket, config, send_id);
 			if (!limits.has_value()) {
 				// No valid limits response means no motor (or no response) at this ID.
 				continue;
 			}
-			motors.emplace_back(*limits, send_id, send_id + cfg.recv_offset);
+			motors.emplace_back(*limits, send_id, send_id + config.recv_offset);
 		}
 
 		if (motors.empty()) {
@@ -243,7 +263,7 @@ int main(int argc, char** argv) {
 		dm_devices.reserve(motors.size());
 		for (auto& motor : motors) {
 			auto dm_device = std::make_shared<damiao_motor::DMCANDevice>(
-				motor, CAN_SFF_MASK, cfg.use_fd, cfg.custom_firmware);
+				motor, CAN_SFF_MASK, config.use_fd, config.custom_firmware);
 			dm_device->set_callback_mode(damiao_motor::CallbackMode::STATE);
 			dm_collection.get_device_collection().add_device(dm_device);
 			dm_devices.push_back(dm_device);
@@ -262,13 +282,13 @@ int main(int argc, char** argv) {
 					  << " tmax=" << lim.tMax << "\n";
 		}
 		std::cout << "Firmware mode: "
-				  << (cfg.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
+				  << (config.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
 
 		// --- Firmware sanity check ---
 		dm_collection.enable_all();
-		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 2000);
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 2000);
 		dm_collection.refresh_all();
-		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 2000);
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 2000);
 
 		constexpr double kTorqueSanityThreshold = 1.0;  // Nm; firmware mismatch causes large garbage
 		bool firmware_ok = true;
@@ -279,7 +299,7 @@ int main(int argc, char** argv) {
 						  << " reported torque=" << motor.get_torque()
 						  << " Nm at rest (threshold: " << kTorqueSanityThreshold << " Nm).\n"
 						  << "  Expected firmware: "
-						  << (cfg.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)")
+						  << (config.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)")
 						  << ".\n"
 						  << "  Try toggling --custom-firmware.\n";
 				firmware_ok = false;
@@ -288,15 +308,46 @@ int main(int argc, char** argv) {
 		}
 		if (!firmware_ok) {
 			dm_collection.disable_all();
-			receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 1000);
+			receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 1000);
 			return 1;
 		}
 
 		dm_collection.enable_all();
-		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 1000);
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 1000);
 
+		// redis setup
+		RocemoDmCanDriver::Communication::RedisClient redis_client;
+		redis_client.connect();
+
+		std::vector<double> zero_vector(motors.size(), 0.0);
+
+		std::string command_torques_key = getTorqueCommandKey(config.robot_name);
+		std::string joint_positions_key = getJointPosKey(config.robot_name);
+		std::string joint_velocities_key = getJointVelKey(config.robot_name);
+		std::string sensed_torques_key = getSensedTorquesKey(config.robot_name);
+
+		redis_client.set<std::vector<double>>(command_torques_key, zero_vector);
+		redis_client.set<std::vector<double>>(joint_velocities_key, zero_vector);
+		// Check if a controller is running on that robot and publishing joint torques, or if another
+		// driver/simulation is running and publishing joint velocities. In both case, don't start the driver.
+		std::this_thread::sleep_for(std::chrono::microseconds(50));
+		if (redis_client.get<std::vector<double>>(command_torques_key) != zero_vector) {
+			std::cerr << "Stop the controller on robot [" << config.robot_name << "] before running the driver\n" << "\n";
+			return -1;
+		}
+		if (redis_client.get<std::vector<double>>(joint_velocities_key) != zero_vector) {
+			std::cerr << "A simulation or another driver is already running on robot [" << config.robot_name << "] cannot start the driver\n" << "\n";
+			return -1;
+		}
+
+		std::vector<double> tau_cmd(motors.size(), 0.0);
 		const damiao_motor::MITParam mit_zero{0.0, 0.0, 0.0, 0.0, 0.0};
-		std::vector<damiao_motor::MITParam> mit_zeros(motors.size(), mit_zero);
+		std::vector<damiao_motor::MITParam> mit_commands(motors.size(), mit_zero);
+		RedisSendData redis_send_data{
+			.joint_positions = zero_vector,
+			.joint_velocities = zero_vector,
+			.joint_torques = zero_vector
+		};
 
 		unsigned long long counter = 0;
 		constexpr unsigned long long kPrintEvery = 100;  // Print at ~10Hz while loop runs at 1kHz.
@@ -304,29 +355,54 @@ int main(int argc, char** argv) {
 		auto t_start = std::chrono::steady_clock::now();
 		auto next_tick = t_start;
 
+		std::cout << "Entering main driver loop...\n";
 		while (runloop) {
 			next_tick += std::chrono::milliseconds(1);
 
-			// Broadcast zero MIT command to all motors.
-			// DM motors reply with state to control commands, so no explicit refresh here.
-			dm_collection.mit_control_all(mit_zeros);
-			receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 200);
-
-			if (counter % kPrintEvery == 0) {
-				std::cout << "\nSample " << counter << "\n";
-				std::cout << "-----------------------------------------------\n";
-				for (size_t m = 0; m < motors.size(); ++m) {
-					const auto& motor = motors[m];
-					std::cout << "0x" << std::hex << std::setw(8) << motor.get_send_can_id()
-							  << std::dec;
-
-					std::cout << std::fixed << std::setprecision(6) << std::setw(14)
-							  << motor.get_position() << std::setw(14) << motor.get_velocity()
-							  << std::setw(14) << motor.get_torque() << std::setw(8)
-							  << motor.get_state_tmos() << motor.get_state_trotor() << "\n";
-				}
-				std::cout << "\n";
+			// read commands from redis
+			tau_cmd = redis_client.get<std::vector<double>>(command_torques_key);
+			if (tau_cmd.size() != motors.size()) {
+				std::cerr << "Received command size " << tau_cmd.size()
+						  << " does not match number of motors " << motors.size() << "\n";
+				runloop = 0;
+				break;
 			}
+			for(int i = 0; i < motors.size(); ++i) {
+				mit_commands[i].tau = tau_cmd[i];
+			}
+
+			// Broadcast MIT command to all motors.
+			// DM motors reply with state to control commands, so no explicit refresh here.
+			dm_collection.mit_control_all(mit_commands);
+			receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 100);
+
+			// send replies to redis
+			for(size_t i = 0; i < motors.size(); ++i) {
+				redis_send_data.joint_positions[i] = motors[i].get_position();
+				redis_send_data.joint_velocities[i] = motors[i].get_velocity();
+				redis_send_data.joint_torques[i] = motors[i].get_torque();
+			}
+			redis_client.setCustomStruct<RedisSendData>(
+				{joint_positions_key, joint_velocities_key, sensed_torques_key},
+				redis_send_data
+			);
+
+
+			// if (counter % kPrintEvery == 0) {
+			// 	std::cout << "\nSample " << counter << "\n";
+			// 	std::cout << "-----------------------------------------------\n";
+			// 	for (size_t m = 0; m < motors.size(); ++m) {
+			// 		const auto& motor = motors[m];
+			// 		std::cout << "0x" << std::hex << std::setw(8) << motor.get_send_can_id()
+			// 				  << std::dec;
+
+			// 		std::cout << std::fixed << std::setprecision(6) << std::setw(14)
+			// 				  << motor.get_position() << std::setw(14) << motor.get_velocity()
+			// 				  << std::setw(14) << motor.get_torque() << std::setw(8)
+			// 				  << motor.get_state_tmos() << motor.get_state_trotor() << "\n";
+			// 	}
+			// 	std::cout << "\n";
+			// }
 
 			++counter;
 			std::this_thread::sleep_until(next_tick);
@@ -338,7 +414,7 @@ int main(int argc, char** argv) {
 		std::cout << "running frequency: " << (counter / elapsed.count()) << " Hz\n";
 
 		dm_collection.disable_all();
-		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 1000);
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 1000);
 
 	} catch (const std::exception& e) {
 		std::cerr << "Error: " << e.what() << "\n";

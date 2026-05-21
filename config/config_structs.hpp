@@ -9,4 +9,5 @@ struct DMCanRobotDriverConfig {
 	uint32_t last_can_id = 7;
 	uint32_t recv_offset = 0x10;
 	bool custom_firmware = false;  // 16-16-16 encoding instead of standard 16-12-12
+	std::string robot_name = "DM_Robot";
 };
