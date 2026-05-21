@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <sstream>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,6 +20,8 @@
 #include <damiao_motor/dm_motor.hpp>
 #include <damiao_motor/dm_motor_constants.hpp>
 #include <damiao_motor/dm_motor_control.hpp>
+#include <damiao_motor/dm_motor_device.hpp>
+#include <damiao_motor/dm_motor_device_collection.hpp>
 
 #include "config/config_structs.hpp"
 #include <glaze/glaze.hpp>
@@ -35,10 +38,10 @@ constexpr LimitParam kProbeLimits{12.5, 30.0, 10.0};
 void print_usage(const char* prog) {
 	std::cout << "Usage: " << prog << " [-c|--config <config_path>]\n\n"
 			  << "Options:\n"
-			  << "  -c, --config <path>   Path to config file (default: config/default_config.json)\n"
+			  << "  -c, --config <path>   Path to config file\n"
 			  << "  --help                Show this help\n\n"
 			  << "Example:\n"
-			  << "  " << prog << " -c config/default_config.json\n";
+			  << "  " << prog << " -c config/custom_config.json\n";
 }
 
 bool parse_config(int argc, char** argv, DMCanRobotDriverConfig& cfg) {
@@ -190,6 +193,31 @@ std::optional<StateResult> read_state_sample(canbus::CANSocket& sock, bool use_f
 	return latest;
 }
 
+void collect_state_batch(canbus::CANSocket& can_socket,
+						 damiao_motor::DMDeviceCollection& dm_collection,
+						 size_t motor_count,
+						 bool use_fd,
+						 int timeout_us_per_poll = 5000,
+						 int max_polls = 100) {
+	std::set<canid_t> seen_ids;
+
+	for (int i = 0; i < max_polls && seen_ids.size() < motor_count; ++i) {
+		if (!can_socket.is_data_available(timeout_us_per_poll)) continue;
+
+		if (use_fd) {
+			canfd_frame frame{};
+			if (!can_socket.read_canfd_frame(frame)) continue;
+			dm_collection.get_device_collection().dispatch_frame_callback(frame);
+			seen_ids.insert(frame.can_id);
+		} else {
+			can_frame frame{};
+			if (!can_socket.read_can_frame(frame)) continue;
+			dm_collection.get_device_collection().dispatch_frame_callback(frame);
+			seen_ids.insert(frame.can_id);
+		}
+	}
+}
+
 std::vector<uint32_t> scan_present_motor_ids(canbus::CANSocket& can_socket, const DMCanRobotDriverConfig& cfg) {
 	std::vector<uint32_t> motor_ids;
 	motor_ids.reserve(static_cast<size_t>(cfg.max_id - cfg.min_id + 1));
@@ -270,6 +298,17 @@ int main(int argc, char** argv) {
 		if (motors.empty()) {
 			std::cerr << "No motors had valid PMAX/VMAX/TMAX limits. Aborting.\n";
 			return 1;
+		}
+
+		damiao_motor::DMDeviceCollection dm_collection(can_socket);
+		std::vector<std::shared_ptr<damiao_motor::DMCANDevice>> dm_devices;
+		dm_devices.reserve(motors.size());
+		for (auto& motor : motors) {
+			auto dm_device = std::make_shared<damiao_motor::DMCANDevice>(
+				motor, CAN_SFF_MASK, cfg.use_fd, cfg.custom_firmware);
+			dm_device->set_callback_mode(damiao_motor::CallbackMode::STATE);
+			dm_collection.get_device_collection().add_device(dm_device);
+			dm_devices.push_back(dm_device);
 		}
 
 		std::cout << "Detected motor IDs: ";
@@ -373,32 +412,26 @@ int main(int argc, char** argv) {
 				  << std::setw(14) << "Vel(rad/s)" << std::setw(14) << "Tau(Nm)"
 				  << std::setw(8) << "Tmos" << "Trotor\n";
 
-		for (int i = 0; i < cfg.samples; ++i) {
-			std::vector<std::optional<StateResult>> batch_states;
-			batch_states.reserve(motors.size());
+		const damiao_motor::MITParam mit_zero{0.0, 0.0, 0.0, 0.0, 0.0};
+		std::vector<damiao_motor::MITParam> mit_zeros(motors.size(), mit_zero);
 
-			for (const auto& motor : motors) {
-				batch_states.push_back(read_state_sample(can_socket, cfg.use_fd, motor, cfg.custom_firmware));
-			}
+		for (int i = 0; i < cfg.samples; ++i) {
+			// Broadcast zero MIT command to all motors, then refresh and collect replies.
+			dm_collection.mit_control_all(mit_zeros);
+			dm_collection.refresh_all();
+			collect_state_batch(can_socket, dm_collection, motors.size(), cfg.use_fd);
 
 			std::cout << "\nSample " << i << "\n";
 			std::cout << "-----------------------------------------------\n";
 			for (size_t m = 0; m < motors.size(); ++m) {
 				const auto& motor = motors[m];
-				const auto& state = batch_states[m];
 				std::cout << "0x" << std::hex << std::setw(8) << motor.get_send_can_id()
 						  << std::dec;
 
-				if (state.has_value()) {
-					std::cout << std::fixed << std::setprecision(6) << std::setw(14)
-							  << state->position << std::setw(14) << state->velocity
-							  << std::setw(14) << state->torque << std::setw(8) << state->t_mos
-							  << state->t_rotor << "\n";
-				} else {
-					std::cout << std::setw(14) << "n/a" << std::setw(14) << "n/a"
-							  << std::setw(14) << "n/a" << std::setw(8) << "n/a"
-							  << "n/a\n";
-				}
+				std::cout << std::fixed << std::setprecision(6) << std::setw(14)
+						  << motor.get_position() << std::setw(14) << motor.get_velocity()
+						  << std::setw(14) << motor.get_torque() << std::setw(8)
+						  << motor.get_state_tmos() << motor.get_state_trotor() << "\n";
 			}
 			std::cout << "\n";
 

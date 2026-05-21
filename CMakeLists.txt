@@ -17,9 +17,12 @@ FetchContent_MakeAvailable(glaze)
 find_package(Threads REQUIRED)
 
 add_library(dm_can_core STATIC
+    dm_can/canbus/can_device_collection.cpp
     dm_can/canbus/can_socket.cpp
     dm_can/damiao_motor/dm_motor.cpp
     dm_can/damiao_motor/dm_motor_control.cpp
+    dm_can/damiao_motor/dm_motor_device.cpp
+    dm_can/damiao_motor/dm_motor_device_collection.cpp
 )
 
 target_include_directories(dm_can_core

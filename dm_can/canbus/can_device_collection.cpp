@@ -42,21 +42,21 @@ void CANDeviceCollection::remove_device(const std::shared_ptr<CANDevice>& device
 }
 
 void CANDeviceCollection::dispatch_frame_callback(can_frame& frame) {
-    auto it = devices_.find(frame.can_id);
-    if (it != devices_.end()) {
-        it->second->callback(frame);
+    // State replies for DM motors are not always keyed by recv_can_id arbitration IDs,
+    // so dispatch to all and let each device callback perform payload-level filtering.
+    for (auto& [id, device] : devices_) {
+        (void)id;
+        device->callback(frame);
     }
-    // Note: Silently ignore frames for unknown devices (this is normal in CAN
-    // networks)
 }
 
 void CANDeviceCollection::dispatch_frame_callback(canfd_frame& frame) {
-    auto it = devices_.find(frame.can_id);
-    if (it != devices_.end()) {
-        it->second->callback(frame);
+    // State replies for DM motors are not always keyed by recv_can_id arbitration IDs,
+    // so dispatch to all and let each device callback perform payload-level filtering.
+    for (auto& [id, device] : devices_) {
+        (void)id;
+        device->callback(frame);
     }
-    // Note: Silently ignore frames for unknown devices (this is normal in CAN
-    // networks)
 }
 
 }  // namespace canbus

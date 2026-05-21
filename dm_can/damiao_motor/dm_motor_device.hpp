@@ -29,7 +29,8 @@ enum CallbackMode {
 
 class DMCANDevice : public canbus::CANDevice {
 public:
-    explicit DMCANDevice(Motor& motor, canid_t recv_can_mask, bool use_fd);
+    explicit DMCANDevice(Motor& motor, canid_t recv_can_mask, bool use_fd,
+                         bool custom_firmware = false);
     void callback(const can_frame& frame);
     void callback(const canfd_frame& frame);
 
@@ -48,6 +49,7 @@ private:
     Motor& motor_;
     CallbackMode callback_mode_;
     bool use_fd_;  // Track if using CAN-FD
+    bool custom_firmware_;
     ControlMode control_mode_ = ControlMode::MIT;
 };
 }  // namespace damiao_motor
