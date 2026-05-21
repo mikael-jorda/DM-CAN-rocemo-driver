@@ -8,7 +8,6 @@
 #include <map>
 #include <optional>
 #include <sstream>
-#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,11 +28,11 @@
 
 namespace {
 
-bool runloop = true;
+volatile sig_atomic_t runloop = 1;
 void signal_handler(int signal) {
 	if (signal == SIGINT) {
 		std::cout << "SIGINT received, exiting...\n";
-		runloop = false;
+		runloop = 0;
 	}
 }
 
@@ -202,27 +201,25 @@ std::optional<StateResult> read_state_sample(canbus::CANSocket& sock, bool use_f
 	return latest;
 }
 
-void collect_state_batch(canbus::CANSocket& can_socket,
-						 damiao_motor::DMDeviceCollection& dm_collection,
-						 size_t motor_count,
-						 bool use_fd,
-						 int timeout_us_per_poll = 5000,
-						 int max_polls = 100) {
-	std::set<canid_t> seen_ids;
+void recv_all(canbus::CANSocket& can_socket,
+			  canbus::CANDeviceCollection& device_collection,
+			  bool use_fd,
+			  int first_timeout_us = 200) {
+	int timeout_us = first_timeout_us;
 
-	for (int i = 0; i < max_polls && seen_ids.size() < motor_count; ++i) {
-		if (!can_socket.is_data_available(timeout_us_per_poll)) continue;
-
-		if (use_fd) {
-			canfd_frame frame{};
-			if (!can_socket.read_canfd_frame(frame)) continue;
-			dm_collection.get_device_collection().dispatch_frame_callback(frame);
-			seen_ids.insert(frame.can_id);
-		} else {
-			can_frame frame{};
-			if (!can_socket.read_can_frame(frame)) continue;
-			dm_collection.get_device_collection().dispatch_frame_callback(frame);
-			seen_ids.insert(frame.can_id);
+	if (use_fd) {
+		canfd_frame response_frame{};
+		while (can_socket.is_data_available(timeout_us) &&
+			   can_socket.read_canfd_frame(response_frame)) {
+			device_collection.dispatch_frame_callback(response_frame);
+			timeout_us = 0;
+		}
+	} else {
+		can_frame response_frame{};
+		while (can_socket.is_data_available(timeout_us) &&
+			   can_socket.read_can_frame(response_frame)) {
+			device_collection.dispatch_frame_callback(response_frame);
+			timeout_us = 0;
 		}
 	}
 }
@@ -429,36 +426,40 @@ int main(int argc, char** argv) {
 		std::vector<damiao_motor::MITParam> mit_zeros(motors.size(), mit_zero);
 
 		unsigned long long counter = 0;
+		constexpr unsigned long long kPrintEvery = 100;  // Print at ~10Hz while loop runs at 1kHz.
 
-		auto t_start = std::chrono::high_resolution_clock::now();
+		auto t_start = std::chrono::steady_clock::now();
+		auto next_tick = t_start;
 
 		while (runloop) {
-			// Broadcast zero MIT command to all motors, then refresh and collect replies.
+			next_tick += std::chrono::milliseconds(1);
+
+			// Broadcast zero MIT command to all motors.
+			// DM motors reply with state to control commands, so no explicit refresh here.
 			dm_collection.mit_control_all(mit_zeros);
-			// dm_collection.refresh_all();
-			collect_state_batch(can_socket, dm_collection, motors.size(), cfg.use_fd);
+			recv_all(can_socket, dm_collection.get_device_collection(), cfg.use_fd, 200);
 
-			std::cout << "\nSample " << counter << "\n";
-			std::cout << "-----------------------------------------------\n";
-			for (size_t m = 0; m < motors.size(); ++m) {
-				const auto& motor = motors[m];
-				std::cout << "0x" << std::hex << std::setw(8) << motor.get_send_can_id()
-						  << std::dec;
+			if (counter % kPrintEvery == 0) {
+				std::cout << "\nSample " << counter << "\n";
+				std::cout << "-----------------------------------------------\n";
+				for (size_t m = 0; m < motors.size(); ++m) {
+					const auto& motor = motors[m];
+					std::cout << "0x" << std::hex << std::setw(8) << motor.get_send_can_id()
+							  << std::dec;
 
-				std::cout << std::fixed << std::setprecision(6) << std::setw(14)
-						  << motor.get_position() << std::setw(14) << motor.get_velocity()
-						  << std::setw(14) << motor.get_torque() << std::setw(8)
-						  << motor.get_state_tmos() << motor.get_state_trotor() << "\n";
+					std::cout << std::fixed << std::setprecision(6) << std::setw(14)
+							  << motor.get_position() << std::setw(14) << motor.get_velocity()
+							  << std::setw(14) << motor.get_torque() << std::setw(8)
+							  << motor.get_state_tmos() << motor.get_state_trotor() << "\n";
+				}
+				std::cout << "\n";
 			}
-			std::cout << "\n";
 
-			// if (cfg.interval_ms > 0) {
-			// 	std::this_thread::sleep_for(std::chrono::milliseconds(cfg.interval_ms));
-			// }
 			++counter;
+			std::this_thread::sleep_until(next_tick);
 		}
 
-		auto t_end = std::chrono::high_resolution_clock::now();
+		auto t_end = std::chrono::steady_clock::now();
 		std::chrono::duration<double> elapsed = t_end - t_start;
 		std::cout << "Elapsed time: " << elapsed.count() << " seconds\n";
 		std::cout << "running frequency: " << (counter / elapsed.count()) << " Hz\n";
