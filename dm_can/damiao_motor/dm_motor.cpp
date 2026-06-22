@@ -18,10 +18,11 @@
 namespace damiao_motor {
 
 // Constructor
-Motor::Motor(const LimitParam& limits, uint32_t send_can_id, uint32_t recv_can_id)
+Motor::Motor(const LimitParam& limits, uint32_t send_can_id, uint32_t recv_can_id, bool use_custom_firmware)
     : send_can_id_(send_can_id),
       recv_can_id_(recv_can_id),
     limits_(limits),
+      custom_firmware_(use_custom_firmware),
       enabled_(false),
       state_q_(0.0),
       state_dq_(0.0),

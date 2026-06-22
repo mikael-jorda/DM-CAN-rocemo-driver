@@ -1,0 +1,90 @@
+<?xml version="1.0" ?>
+<mujoco model="robot">
+  <!-- <option gravity="0 0 0"/> -->
+  <compiler angle="radian" meshdir="./assets" autolimits="true" />
+  <option integrator="implicitfast" />
+  <default>
+    <default class="robot">
+      <joint frictionloss="0.0" armature="0.005" damping="0.1"/>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" />
+      </default>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="base">
+      <!-- <geom type="mesh" class="visual" rgba="0.615686 0.811765 0.929412 1" mesh="shoulder_mount"/> -->
+      <body name="shoulder_1" pos="4.33269e-06 -0.0806999 -0.0157907" quat="0.5 0.5 -0.5 0.5">
+        <joint axis="0 0 1" name="J1" type="hinge" range="-1.5707963267948966 2.356194490192345" armature="0.0209" damping="0.241603" />
+        <inertial pos="-0.015835 -0.000322412 0.0780199" quat="0.704037 -0.110217 -0.114597 0.692136" mass="0.760023" diaginertia="1.2299e-03 1.2025e-03 3.0821e-04" />
+        <geom type="mesh" class="visual" pos="-0.0158396 -0.000232575 0.077937" quat="0.5 -0.5 0.5 -0.5" mesh="shoulder_1" material="shoulder_1_material" />
+        <body name="shoulder_2" pos="-0.025 -0.009 0.11" quat="0.5 0.5 0.5 -0.5">
+          <joint axis="0 0 1" name="J2" type="hinge" range="-2.356194490192345 0.5235987755982988" armature="0.0319" damping="0.647109" />
+          <inertial pos="8.28611e-05 0.0829948 0.00893024" quat="0.665644 0.746265 -0.00246685 0.000494758" mass="0.665616" diaginertia="1.1571e-03 1.0150e-03 3.6105e-04" />
+          <geom type="mesh" class="visual" pos="0.000114315 -0.0797544 -0.00845965" quat="0.5 -0.5 -0.5 -0.5" mesh="shoulder_2" material="shoulder_2_material" />
+          <body name="shoulder_3" pos="-4.16334e-15 -0.10775 -0.009" quat="0.707107 0.707107 -1.45106e-13 -2.71638e-14">
+            <joint axis="0 0 1" name="J3" type="hinge" range="-2.356194490192345 1.5707963267948966" armature="0.0319" damping="0.43017" />
+            <inertial pos="-0.00136881 0.021893 0.148831" quat="0.991623 -0.128922 -0.00587692 0.00537595" mass="0.795003" diaginertia="3.1880e-03 3.0977e-03 3.8341e-04" />
+            <geom type="mesh" class="visual" pos="-0.000990504 0.0155875 0.133984" quat="2.4302e-13 -0.707107 -0.707107 -1.21973e-13" mesh="shoulder_3" material="shoulder_3_material" />
+            <!-- <geom name="back_arm_collision" type="capsule" pos="0 0 0.03" quat="1.81452e-13 -0.707107 -0.707107 -2.05755e-13" size="0.05 0.14" rgba="1.0 0.0 0.0 0.2" /> -->
+            <body name="elbow" pos="-0.010125 0.036 0.18925" quat="0.5 0.5 -0.5 -0.5">
+              <joint axis="0 0 1" name="J4" type="hinge" range="-1.5707963267948966 1.3089969389957472" armature="0.0319" damping="0.425375" />
+              <inertial pos="-0.0596518 0.0304563 -0.00822611" quat="0.63147 0.540994 0.311502 0.459931" mass="0.574575" diaginertia="8.5283e-04 7.3635e-04 3.0535e-04" />
+              <geom type="mesh" class="visual" pos="-0.0607052 0.0323787 -0.00870208" quat="2.03846e-13 -1.49072e-13 -0.707107 0.707107" mesh="elbow" material="elbow_material" />
+              <!-- <geom name="forearm_collision" type="capsule" pos="-0.06 -0.11 -0.02" quat="0.707107 0.683013 -0.183013 -1.98186e-13" size="0.05 0.11" rgba="1.0 0.0 0.0 0.2" /> -->
+              <body name="wrist_1" pos="-0.083 0.035935 -0.01006" quat="0.5 0.5 -0.5 -0.5 ">
+                <joint axis="0 0 1" name="J5" type="hinge" range="-2.356194490192345 2.321694490192345" armature="0.0021" damping="0.00223872" />
+                <inertial pos="-0.00790428 0.000908846 0.0765929" quat="0.638094 -0.00873784 0.0196649 0.769658" mass="0.77242" diaginertia="1.3613e-03 1.2194e-03 4.1198e-04" />
+                <geom type="mesh" class="visual" pos="0.000906402 0.00850847 0.0791683" quat="0.5 -0.5 -0.5 -0.5" mesh="wrist_1" material="wrist_1_material" />
+                <body name="wrist_2" pos="2.43139e-14 0.03115 0.176" quat="0.5 -0.5 -0.5 -0.5">
+                  <joint axis="0 0 1" name="J6" type="hinge" range="-1.5707963267948966 1.5707963267948966" armature="0.0021" damping="0.0482857" />
+                  <inertial pos="-0.000410604 -0.00253165 -0.029323" quat="0.64706 -0.00103926 0.00409509 0.762428" mass="0.440332" diaginertia="2.5330e-04 2.1355e-04 1.3422e-04" />
+                  <geom type="mesh" class="visual" pos="-0.000566088 -0.00242805 -0.0310222" quat="1 5.58546e-14 2.78222e-13 -1.29193e-14" mesh="wrist_2" material="wrist_2_material" />
+                  <body name="wrist_3" pos="-8.32667e-16 -0.0035 -0.03115" quat="5.60941e-14 -2.06293e-14 0.707107 -0.707107">
+                    <joint axis="0 0 1" name="J7" type="hinge" range="-1.5707963267948966 0.7853981633974483" armature="0.0021" damping="0.0839735" />
+                    <inertial pos="-0.0182986 -1.14379e-10 -0.0136478" quat="0 0.76576 0 0.643126" mass="0.151559" diaginertia="1.0310e-04 9.8150e-05 2.4213e-05" />
+                    <geom type="cylinder" class="visual" fromto="0 0 0 -0.1 0 0" size="0.01" rgba="0.498039 0.498039 0.498039 1" />
+
+                    <body name="wrist_point" />
+
+                    <body name="eef" pos="-0.03 0 0" quat="0.5 0.5 -0.5 -0.5">
+                      <inertial pos="0 0 0" mass="0.05" diaginertia="8.1792e-04 8.1792e-04 8.1792e-04" />
+                    </body>
+
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <asset>
+    <mesh name="shoulder_mount" file="shoulder_mount_visual.stl" />
+    <mesh name="shoulder_1" file="shoulder_1_visual.stl" />
+    <mesh name="shoulder_2" file="shoulder_2_visual.stl" />
+    <mesh name="shoulder_3" file="shoulder_3_visual.stl" />
+    <mesh name="elbow" file="elbow_visual.stl" />
+    <mesh name="wrist_1" file="wrist_1_visual.stl" />
+    <mesh name="wrist_2" file="wrist_2_visual.stl" />
+    <!-- <mesh name="wrist_3" file="wrist_3_visual.stl" /> -->
+    <material name="shoulder_1_material" rgba="0.672996 0.727429 0.764476 1" />
+    <material name="shoulder_2_material" rgba="0.681358 0.710892 0.673032 1" />
+    <material name="shoulder_3_material" rgba="0.620792 0.65767 0.673144 1" />
+    <material name="elbow_material" rgba="0.485369 0.459916 0.41558 1" />
+    <material name="wrist_1_material" rgba="0.572333 0.521769 0.413421 1" />
+    <material name="wrist_2_material" rgba="0.506624 0.534718 0.565934 1" />
+    <!-- <material name="wrist_3_material" rgba="0.39119 0.317503 0.130116 1" /> -->
+  </asset>
+  <actuator>
+    <motor class="robot" name="J1" joint="J1" ctrlrange="-100 100" ctrllimited="true" />
+    <motor class="robot" name="J2" joint="J2" ctrlrange="-100 100" ctrllimited="true" />
+    <motor class="robot" name="J3" joint="J3" ctrlrange="-100 100" ctrllimited="true" />
+    <motor class="robot" name="J4" joint="J4" ctrlrange="-100 100" ctrllimited="true" />
+    <motor class="robot" name="J5" joint="J5" ctrlrange="-50 50" ctrllimited="true" />
+    <motor class="robot" name="J6" joint="J6" ctrlrange="-50 50" ctrllimited="true" />
+    <motor class="robot" name="J7" joint="J7" ctrlrange="-50 50" ctrllimited="true" />
+  </actuator>
+</mujoco>

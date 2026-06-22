@@ -28,7 +28,7 @@ class Motor {
 
 public:
     // Constructor
-    Motor(const LimitParam& limits, uint32_t send_can_id, uint32_t recv_can_id);
+    Motor(const LimitParam& limits, uint32_t send_can_id, uint32_t recv_can_id, bool use_custom_firmware = false);
 
     // State getters
     double get_position() const { return state_q_; }
@@ -41,6 +41,7 @@ public:
     uint32_t get_send_can_id() const { return send_can_id_; }
     uint32_t get_recv_can_id() const { return recv_can_id_; }
     const LimitParam& get_limits() const { return limits_; }
+    const bool uses_custom_firmware() const { return custom_firmware_; }
 
     // Enable status getters
     bool is_enabled() const { return enabled_; }
@@ -60,6 +61,7 @@ protected:
     uint32_t send_can_id_;
     uint32_t recv_can_id_;
     LimitParam limits_;
+    bool custom_firmware_;
 
     // Enable status
     bool enabled_;

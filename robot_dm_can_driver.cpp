@@ -91,9 +91,20 @@ bool parse_config(int argc, char** argv, DMCanRobotDriverConfig& config) {
 		std::cout << "No -c/--config provided. Using default config values from config_structs.hpp\n";
 	}
 
-	if (config.first_can_id > config.last_can_id) {
-		std::cerr << "Invalid config: first_can_id must be <= last_can_id\n";
+	if (config.robot_model_file.empty()) {
+		std::cerr << "robot_model_file is required in the config\n";
 		return false;
+	}
+
+	for (const auto& range : config.arm_can_id_ranges) {
+		if (range.first == 0 || range.second == 0) {
+			std::cerr << "Invalid config: CAN IDs must be > 0\n";
+			return false;
+		}
+		if (range.first > range.second) {
+			std::cerr << "Invalid config: arm CAN ID range start must be <= end\n";
+			return false;
+		}
 	}
 
 	return true;
@@ -230,6 +241,10 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	// TODO: load pinocchio model gor grav comp
+
+	// TODO: validate model is coherent with number of can motors
+
 	// setup signal handlers for graceful shutdown
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
@@ -237,20 +252,45 @@ int main(int argc, char** argv) {
 
 	try {
 		canbus::CANSocket can_socket(config.iface, config.use_fd);
-		std::cout << "Connected. iface=" << config.iface << " scan_range=[" << config.first_can_id << ", "
-				  << config.last_can_id << "] recv_offset=0x" << std::hex << config.recv_offset << std::dec
-				  << " fd=" << (config.use_fd ? "on" : "off") << "\n";
+		std::cout << "Connected. iface=" << config.iface << "\n";
+
+		uint32_t last_can_id = 0;
+		for (const auto& range : config.arm_can_id_ranges) {
+			if (range.second > last_can_id) {
+				last_can_id = range.second;
+			}
+		}
+		for (const auto& id : config.gripper_can_ids) {
+			if (id > last_can_id) {
+				last_can_id = id;
+			}
+		}
 
 		std::cout << "Scanning motor IDs...\n";
+		int num_motors_expected = 0;
+		for (const auto& range : config.arm_can_id_ranges) {
+			num_motors_expected += static_cast<int>(range.second - range.first + 1);
+		}
+		num_motors_expected += static_cast<int>(config.gripper_can_ids.size());
 		std::vector<Motor> motors;
-		motors.reserve(static_cast<size_t>(config.last_can_id - config.first_can_id + 1));
-		for (uint32_t send_id = config.first_can_id; send_id <= config.last_can_id; ++send_id) {
-			const auto limits = query_motor_limits(can_socket, config, send_id);
+		motors.reserve(static_cast<size_t>(num_motors_expected));
+		for (const auto& range : config.arm_can_id_ranges) {
+			for (uint32_t send_id = range.first; send_id <= range.second; ++send_id) {
+				const auto limits = query_motor_limits(can_socket, config, send_id);
+				if (!limits.has_value()) {
+					// No valid limits response means no motor (or no response) at this ID.
+					continue;
+				}
+				motors.emplace_back(*limits, send_id, send_id + config.recv_offset, config.arm_uses_custom_firmware);
+			}
+		}
+		for (const auto& id : config.gripper_can_ids) {
+			const auto limits = query_motor_limits(can_socket, config, id);
 			if (!limits.has_value()) {
 				// No valid limits response means no motor (or no response) at this ID.
 				continue;
 			}
-			motors.emplace_back(*limits, send_id, send_id + config.recv_offset);
+			motors.emplace_back(*limits, id, id + config.recv_offset, config.gripper_uses_custom_firmware);
 		}
 
 		if (motors.empty()) {
@@ -263,7 +303,7 @@ int main(int argc, char** argv) {
 		dm_devices.reserve(motors.size());
 		for (auto& motor : motors) {
 			auto dm_device = std::make_shared<damiao_motor::DMCANDevice>(
-				motor, CAN_SFF_MASK, config.use_fd, config.custom_firmware);
+				motor, CAN_SFF_MASK, config.use_fd, motor.uses_custom_firmware());
 			dm_device->set_callback_mode(damiao_motor::CallbackMode::STATE);
 			dm_collection.get_device_collection().add_device(dm_device);
 			dm_devices.push_back(dm_device);
@@ -281,25 +321,36 @@ int main(int argc, char** argv) {
 					  << " limits: pmax=" << lim.pMax << " vmax=" << lim.vMax
 					  << " tmax=" << lim.tMax << "\n";
 		}
-		std::cout << "Firmware mode: "
-				  << (config.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
+		std::cout << "Arm firmware mode: "
+				  << (config.arm_uses_custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
+		std::cout << "Gripper firmware mode: "
+				  << (config.gripper_uses_custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
 
 		// --- Firmware sanity check ---
 		dm_collection.enable_all();
-		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 2000);
-		dm_collection.refresh_all();
-		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 2000);
+		// dm_collection.refresh_all();
+		const damiao_motor::MITParam mit_zero{0.0, 0.0, 0.0, 0.0, 0.0};
+		std::vector<damiao_motor::MITParam> mit_commands(motors.size(), mit_zero);
+		dm_collection.mit_control_all(mit_commands);
+		usleep(10000);  // wait for all replies to be processed
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd);
 
 		constexpr double kTorqueSanityThreshold = 1.0;  // Nm; firmware mismatch causes large garbage
 		bool firmware_ok = true;
 		for (const auto& motor : motors) {
+			std::cout << "Motor 0x" << std::hex << motor.get_send_can_id() << std::dec
+					  << " state: pos=" << motor.get_position()
+					  << " vel=" << motor.get_velocity()
+					  << " torque=" << motor.get_torque()
+					  << " tmos=" << motor.get_state_tmos()
+					  << " trotor=" << motor.get_state_trotor() << "\n";
 			if (std::abs(motor.get_torque()) > kTorqueSanityThreshold) {
 				std::cerr << "[FIRMWARE MISMATCH] Motor 0x" << std::hex
 						  << motor.get_send_can_id() << std::dec
 						  << " reported torque=" << motor.get_torque()
 						  << " Nm at rest (threshold: " << kTorqueSanityThreshold << " Nm).\n"
 						  << "  Expected firmware: "
-						  << (config.custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)")
+						  << (motor.uses_custom_firmware() ? "custom (16-16-16)" : "standard (16-12-12)")
 						  << ".\n"
 						  << "  Try toggling --custom-firmware.\n";
 				firmware_ok = false;
@@ -308,12 +359,9 @@ int main(int argc, char** argv) {
 		}
 		if (!firmware_ok) {
 			dm_collection.disable_all();
-			receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 1000);
+			receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd);
 			return 1;
 		}
-
-		dm_collection.enable_all();
-		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 1000);
 
 		// redis setup
 		RocemoDmCanDriver::Communication::RedisClient redis_client;
@@ -341,8 +389,6 @@ int main(int argc, char** argv) {
 		}
 
 		std::vector<double> tau_cmd(motors.size(), 0.0);
-		const damiao_motor::MITParam mit_zero{0.0, 0.0, 0.0, 0.0, 0.0};
-		std::vector<damiao_motor::MITParam> mit_commands(motors.size(), mit_zero);
 		RedisSendData redis_send_data{
 			.joint_positions = zero_vector,
 			.joint_velocities = zero_vector,
