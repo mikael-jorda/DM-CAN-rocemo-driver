@@ -16,4 +16,9 @@ struct DMCanRobotDriverConfig {
 	// robot related config
 	std::string robot_model_file;
 	std::string robot_name = "DMRobot";
+	// gripper related_config
+	std::string gripper_name = "HapticGripper";
+	double gripper_min_width = 0.0;  // rad
+	double gripper_max_width = 0.7;  // rad
+	double gripper_max_force = 0.5;  // Nm
 };

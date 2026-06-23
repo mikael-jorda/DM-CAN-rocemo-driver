@@ -23,11 +23,6 @@ struct RobotRedisSendData {
 	Eigen::VectorXd joint_velocities;
 	Eigen::VectorXd joint_torques;
 };
-struct GripperRedisSendData {
-	double gripper_width;
-	double gripper_speed;
-	double gripper_torque;
-};
 
 std::string getJointPosKey(const std::string& robot_name) {
 	return "/rocemo/" + robot_name + "/sensors/joint_positions";
@@ -45,17 +40,17 @@ std::string getSensedTorquesKey(const std::string& robot_name) {
 	return "/rocemo/" + robot_name + "/sensors/joint_torques";
 }
 
-std::string getGripperCommandKey(const std::string& robot_name) {
-	return "/rocemo/" + robot_name + "/commands/gripper_torque";
+std::string getGripperCommandKey(const std::string& robot_name, const std::string& gripper_name) {
+	return "/rocemo/" + robot_name + "/grippers/" + gripper_name + "/command";
 }
-std::string getGripperWidthKey(const std::string& robot_name) {
-	return "/rocemo/" + robot_name + "/sensors/gripper_width";
+std::string getGripperWidthKey(const std::string& robot_name, const std::string& gripper_name) {
+	return "/rocemo/" + robot_name + "/grippers/" + gripper_name + "/width";
 }
-std::string getGripperSpeedKey(const std::string& robot_name) {
-	return "/rocemo/" + robot_name + "/sensors/gripper_speed";
-}
-std::string getGripperTorqueKey(const std::string& robot_name) {
-	return "/rocemo/" + robot_name + "/sensors/gripper_torque";
+
+double command_from_normalized(double normalized_command, double min, double max) {
+	if (normalized_command < -1) return min;
+	if (normalized_command > 1) return max;
+	return min + (normalized_command + 1) * 0.5 * (max - min);
 }
 
 volatile sig_atomic_t runloop = 1;
@@ -71,6 +66,9 @@ using damiao_motor::LimitParam;
 using damiao_motor::RID;
 
 constexpr LimitParam kProbeLimits{12.5, 30.0, 10.0};
+
+constexpr double kVelLimitPercentageAllowed = 0.50; // the driver will error out if the velocity is higher than this threshold
+constexpr double kTorqueLimitPercentageAllowed = 0.95; // the driver will saturate the torque command if it is higher than this threshold
 
 void print_usage(const char* prog) {
 	std::cout << "Usage: " << prog << " [-c|--config <config_path>]\n\n"
@@ -291,40 +289,54 @@ int main(int argc, char** argv) {
 	signal(SIGTERM, signal_handler);
 	signal(SIGABRT, signal_handler);
 
+	canbus::CANSocket can_socket(config.iface, config.use_fd);
+	std::cout << "Connected. iface=" << config.iface << "\n";
+	damiao_motor::DMDeviceCollection dm_collection(can_socket);
+
+	std::cout << "Scanning motor IDs...\n";
+	int num_arm_motors = 0;
+	for (const auto& range : config.arm_can_id_ranges) {
+		num_arm_motors += static_cast<int>(range.second - range.first + 1);
+	}
+	std::vector<Motor> arm_motors;
+	arm_motors.reserve(static_cast<size_t>(num_arm_motors));
+	for (const auto& range : config.arm_can_id_ranges) {
+		for (uint32_t send_id = range.first; send_id <= range.second; ++send_id) {
+			const auto limits = query_motor_limits(can_socket, config, send_id);
+			if (!limits.has_value()) {
+				// No valid limits response means no motor (or no response) at this ID.
+				continue;
+			}
+			arm_motors.emplace_back(*limits, send_id, send_id + config.recv_offset, config.arm_uses_custom_firmware);
+		}
+	}
+	std::vector<Motor> gripper_motors;
+	if (has_gripper) {
+		const auto limits = query_motor_limits(can_socket, config, config.gripper_can_id);
+		if (limits.has_value()) {
+			if (limits->tMax < config.gripper_max_force) {
+				std::cerr << "-----------------------\n" 
+						  << "WARNING: Gripper motor 0x" << std::hex << config.gripper_can_id << std::dec
+						  << " TMAX=" << limits->tMax
+						  << " is lower than the configured gripper_max_force=" << config.gripper_max_force
+						  << ". Modifying the gripper_max_force to " << limits->tMax 
+						  << ".\n-----------------------\n";
+				config.gripper_max_force = limits->tMax;
+			}
+			gripper_motors.emplace_back(*limits, config.gripper_can_id, config.gripper_can_id + config.recv_offset, config.gripper_uses_custom_firmware);
+		}
+	}
+
+	if (arm_motors.empty() && gripper_motors.empty()) {
+		std::cout << "No motors responded with valid PMAX/VMAX/TMAX in the scan range.\n";
+		return 0;
+	}
+
+	const size_t total_motor_count = arm_motors.size() + gripper_motors.size();
+	const damiao_motor::MITParam mit_zero{0.0, 0.0, 0.0, 0.0, 0.0};
+	std::vector<damiao_motor::MITParam> mit_zero_commands(total_motor_count, mit_zero);
+
 	try {
-		canbus::CANSocket can_socket(config.iface, config.use_fd);
-		std::cout << "Connected. iface=" << config.iface << "\n";
-
-		std::cout << "Scanning motor IDs...\n";
-		int num_arm_motors = 0;
-		for (const auto& range : config.arm_can_id_ranges) {
-			num_arm_motors += static_cast<int>(range.second - range.first + 1);
-		}
-		std::vector<Motor> arm_motors;
-		arm_motors.reserve(static_cast<size_t>(num_arm_motors));
-		for (const auto& range : config.arm_can_id_ranges) {
-			for (uint32_t send_id = range.first; send_id <= range.second; ++send_id) {
-				const auto limits = query_motor_limits(can_socket, config, send_id);
-				if (!limits.has_value()) {
-					// No valid limits response means no motor (or no response) at this ID.
-					continue;
-				}
-				arm_motors.emplace_back(*limits, send_id, send_id + config.recv_offset, config.arm_uses_custom_firmware);
-			}
-		}
-		std::vector<Motor> gripper_motors;
-		if (has_gripper) {
-			const auto limits = query_motor_limits(can_socket, config, config.gripper_can_id);
-			if (limits.has_value()) {
-				gripper_motors.emplace_back(*limits, config.gripper_can_id, config.gripper_can_id + config.recv_offset, config.gripper_uses_custom_firmware);
-			}
-		}
-
-		if (arm_motors.empty() && gripper_motors.empty()) {
-			std::cout << "No motors responded with valid PMAX/VMAX/TMAX in the scan range.\n";
-			return 0;
-		}
-
 		// Validate pinocchio model is coherent with number of can motors
 		if (pin_model.nv != arm_motors.size()) {
 			std::cout << "ERROR: Pinocchio model has " << pin_model.nv
@@ -333,7 +345,7 @@ int main(int argc, char** argv) {
 		}
 		Eigen::VectorXd gravity_compensation = Eigen::VectorXd::Zero(pin_model.nv);
 
-		damiao_motor::DMDeviceCollection dm_collection(can_socket);
+		// damiao_motor::DMDeviceCollection dm_collection(can_socket);
 		std::vector<std::shared_ptr<damiao_motor::DMCANDevice>> dm_devices;
 		dm_devices.reserve(arm_motors.size() + gripper_motors.size());
 		for (auto& motor : arm_motors) {
@@ -351,35 +363,32 @@ int main(int argc, char** argv) {
 			dm_devices.push_back(dm_device);
 		}
 
-		std::cout << "Detected motor IDs: ";
-		for (size_t i = 0; i < dm_devices.size(); ++i) {
-			std::cout << "0x" << std::hex << dm_devices[i]->get_motor().get_send_can_id() << std::dec;
-			if (i + 1 < dm_devices.size()) std::cout << ", ";
-		}
-		std::cout << "\n";
-		for (const auto& motor : arm_motors) {
-			const auto& lim = motor.get_limits();
-			std::cout << "  arm motor 0x" << std::hex << motor.get_send_can_id() << std::dec
-					  << " limits: pmax=" << lim.pMax << " vmax=" << lim.vMax
-					  << " tmax=" << lim.tMax << "\n";
-		}
-		for (const auto& motor : gripper_motors) {
-			const auto& lim = motor.get_limits();
-			std::cout << "  gripper motor 0x" << std::hex << motor.get_send_can_id() << std::dec
-					  << " limits: pmax=" << lim.pMax << " vmax=" << lim.vMax
-					  << " tmax=" << lim.tMax << "\n";
-		}
-		std::cout << "Arm firmware mode: "
-				  << (config.arm_uses_custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
-		std::cout << "Gripper firmware mode: "
-				  << (config.gripper_uses_custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
+		// std::cout << "Detected motor IDs: ";
+		// for (size_t i = 0; i < dm_devices.size(); ++i) {
+		// 	std::cout << "0x" << std::hex << dm_devices[i]->get_motor().get_send_can_id() << std::dec;
+		// 	if (i + 1 < dm_devices.size()) std::cout << ", ";
+		// }
+		// std::cout << "\n";
+		// for (const auto& motor : arm_motors) {
+		// 	const auto& lim = motor.get_limits();
+		// 	std::cout << "  arm motor 0x" << std::hex << motor.get_send_can_id() << std::dec
+		// 			  << " limits: pmax=" << lim.pMax << " vmax=" << lim.vMax
+		// 			  << " tmax=" << lim.tMax << "\n";
+		// }
+		// for (const auto& motor : gripper_motors) {
+		// 	const auto& lim = motor.get_limits();
+		// 	std::cout << "  gripper motor 0x" << std::hex << motor.get_send_can_id() << std::dec
+		// 			  << " limits: pmax=" << lim.pMax << " vmax=" << lim.vMax
+		// 			  << " tmax=" << lim.tMax << "\n";
+		// }
+		// std::cout << "Arm firmware mode: "
+		// 		  << (config.arm_uses_custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
+		// std::cout << "Gripper firmware mode: "
+		// 		  << (config.gripper_uses_custom_firmware ? "custom (16-16-16)" : "standard (16-12-12)") << "\n";
 
 		// --- Firmware sanity check ---
 		dm_collection.enable_all();
-		// dm_collection.refresh_all();
-		const damiao_motor::MITParam mit_zero{0.0, 0.0, 0.0, 0.0, 0.0};
-		const size_t total_motor_count = arm_motors.size() + gripper_motors.size();
-		std::vector<damiao_motor::MITParam> mit_commands(total_motor_count, mit_zero);
+		auto mit_commands = mit_zero_commands;
 		dm_collection.mit_control_all(mit_commands);
 		usleep(10000);  // wait for all replies to be processed
 		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd);
@@ -388,12 +397,12 @@ int main(int argc, char** argv) {
 		bool firmware_ok = true;
 		auto validate_motor_group = [&](const std::vector<Motor>& motor_group, const char* group_name) {
 			for (const auto& motor : motor_group) {
-				std::cout << group_name << " motor 0x" << std::hex << motor.get_send_can_id() << std::dec
-						  << " state: pos=" << motor.get_position()
-						  << " vel=" << motor.get_velocity()
-						  << " torque=" << motor.get_torque()
-						  << " tmos=" << motor.get_state_tmos()
-						  << " trotor=" << motor.get_state_trotor() << "\n";
+				// std::cout << group_name << " motor 0x" << std::hex << motor.get_send_can_id() << std::dec
+				// 		  << " state: pos=" << motor.get_position()
+				// 		  << " vel=" << motor.get_velocity()
+				// 		  << " torque=" << motor.get_torque()
+				// 		  << " tmos=" << motor.get_state_tmos()
+				// 		  << " trotor=" << motor.get_state_trotor() << "\n";
 				if (std::abs(motor.get_torque()) > kTorqueSanityThreshold) {
 					std::cerr << "[FIRMWARE MISMATCH] " << group_name << " motor 0x" << std::hex
 							  << motor.get_send_can_id() << std::dec
@@ -427,41 +436,34 @@ int main(int argc, char** argv) {
 		std::string arm_joint_positions_key = getJointPosKey(config.robot_name);
 		std::string arm_joint_velocities_key = getJointVelKey(config.robot_name);
 		std::string arm_sensed_torques_key = getSensedTorquesKey(config.robot_name);
-		std::string gripper_command_torques_key = getGripperCommandKey(config.robot_name);
-		std::string gripper_joint_positions_key = getGripperWidthKey(config.robot_name);
-		std::string gripper_joint_velocities_key = getGripperSpeedKey(config.robot_name);
-		std::string gripper_sensed_torques_key = getGripperTorqueKey(config.robot_name);
+		std::string gripper_command_key = getGripperCommandKey(config.robot_name, config.gripper_name);
+		std::string gripper_width_key = getGripperWidthKey(config.robot_name, config.gripper_name);
 
 		redis_client.set<Eigen::VectorXd>(arm_command_torques_key, zero_arm_vector);
 		redis_client.set<Eigen::VectorXd>(arm_joint_velocities_key, zero_arm_vector);
-		redis_client.set<double>(gripper_command_torques_key, 0.0);
-		redis_client.set<double>(gripper_joint_velocities_key, 0.0);
+		redis_client.set<double>(gripper_command_key, 0.0);
+		redis_client.set<double>(gripper_width_key, 0.0);
 		// Check if a controller is running on that robot and publishing joint torques, or if another
 		// driver/simulation is running and publishing joint velocities. In both case, don't start the driver.
 		std::this_thread::sleep_for(std::chrono::microseconds(50));
 		if (redis_client.get<Eigen::VectorXd>(arm_command_torques_key) != zero_arm_vector ||
-			redis_client.get<double>(gripper_command_torques_key) != 0.0) {
+			redis_client.get<double>(gripper_command_key) != 0.0) {
 			std::cerr << "Stop the controller on robot [" << config.robot_name << "] before running the driver\n" << "\n";
 			return -1;
 		}
-		if (redis_client.get<Eigen::VectorXd>(arm_joint_velocities_key) != zero_arm_vector ||
-			redis_client.get<double>(gripper_joint_velocities_key) != 0.0) {
+		if (redis_client.get<Eigen::VectorXd>(arm_joint_velocities_key) != zero_arm_vector) {
 			std::cerr << "A simulation or another driver is already running on robot [" << config.robot_name << "] cannot start the driver\n" << "\n";
 			return -1;
 		}
 
 		Eigen::VectorXd arm_tau_cmd = Eigen::VectorXd::Zero(arm_motors.size());
-		double gripper_command_torque = 0.0;
+		double gripper_normalized_command = 0.0;
 		RobotRedisSendData arm_redis_send_data{
 			.joint_positions = zero_arm_vector,
 			.joint_velocities = zero_arm_vector,
 			.joint_torques = zero_arm_vector
 		};
-		GripperRedisSendData gripper_redis_send_data{
-			.gripper_width = 0.0,
-			.gripper_speed = 0.0,
-			.gripper_torque = 0.0
-		};
+		double gripper_width = 0.0;
 
 		unsigned long long counter = 0;
 		constexpr unsigned long long kPrintEvery = 100;  // Print at ~10Hz while loop runs at 1kHz.
@@ -488,15 +490,23 @@ int main(int argc, char** argv) {
 			// std::cout << "Gravity compensation: " << gravity_compensation.transpose() << "\n";
 			arm_tau_cmd += gravity_compensation;
 			for (size_t i = 0; i < arm_motors.size(); ++i) {
+				if (std::abs(arm_tau_cmd[i]) > kTorqueLimitPercentageAllowed * arm_motors[i].get_limits().tMax) {
+					std::cout << "WARNING: Arm motor 0x" << std::hex << arm_motors[i].get_send_can_id() << std::dec
+							  << " torque command " << arm_tau_cmd[i]
+							  << " exceeds " << kTorqueLimitPercentageAllowed * 100.0
+							  << "% of TMAX (" << arm_motors[i].get_limits().tMax << "). Saturating.\n";
+					arm_tau_cmd[i] = std::copysign(kTorqueLimitPercentageAllowed * arm_motors[i].get_limits().tMax, arm_tau_cmd[i]);
+				}
 				mit_commands[i].tau = arm_tau_cmd[i];
 			}
 
 			if (has_gripper)
 			{
-				gripper_command_torque = redis_client.get<double>(gripper_command_torques_key);
+				gripper_normalized_command = redis_client.get<double>(gripper_command_key);
+				double gripper_command = command_from_normalized(gripper_normalized_command, -config.gripper_max_force, config.gripper_max_force);
 				for (size_t i = 0; i < gripper_motors.size(); ++i)
 				{
-					mit_commands[arm_motors.size() + i].tau = gripper_command_torque;
+					mit_commands[arm_motors.size() + i].tau = gripper_command;
 				}
 			}
 
@@ -510,19 +520,28 @@ int main(int argc, char** argv) {
 				arm_redis_send_data.joint_positions[i] = arm_motors[i].get_position();
 				arm_redis_send_data.joint_velocities[i] = arm_motors[i].get_velocity();
 				arm_redis_send_data.joint_torques[i] = arm_motors[i].get_torque();
+				if (std::abs(arm_redis_send_data.joint_velocities[i]) > kVelLimitPercentageAllowed * arm_motors[i].get_limits().vMax) {
+					std::cerr << "ERROR: Arm motor 0x" << std::hex << arm_motors[i].get_send_can_id() << std::dec
+							  << " velocity " << arm_redis_send_data.joint_velocities[i]
+							  << " exceeds " << kVelLimitPercentageAllowed * 100.0
+							  << "% of VMAX (" << arm_motors[i].get_limits().vMax << ").\n";
+					runloop = 0;
+				}
 			}
 			redis_client.setCustomStruct<RobotRedisSendData>(
 				{arm_joint_positions_key, arm_joint_velocities_key, arm_sensed_torques_key},
 				arm_redis_send_data
 			);
 			if (has_gripper) {
-					gripper_redis_send_data.gripper_width = gripper_motors[0].get_position();
-					gripper_redis_send_data.gripper_speed = gripper_motors[0].get_velocity();
-					gripper_redis_send_data.gripper_torque = gripper_motors[0].get_torque();
-				redis_client.setCustomStruct<GripperRedisSendData>(
-					{gripper_joint_positions_key, gripper_joint_velocities_key, gripper_sensed_torques_key},
-					gripper_redis_send_data
-				);
+					gripper_width = std::clamp(gripper_motors[0].get_position(), config.gripper_min_width, config.gripper_max_width);
+				redis_client.set<double>(gripper_width_key, gripper_width);
+				if (std::abs(gripper_motors[0].get_velocity()) > kVelLimitPercentageAllowed * gripper_motors[0].get_limits().vMax) {
+					std::cerr << "ERROR: Gripper motor 0x" << std::hex << gripper_motors[0].get_send_can_id() << std::dec
+							  << " velocity " << gripper_motors[0].get_velocity()
+							  << " exceeds " << kVelLimitPercentageAllowed * 100.0
+							  << "% of VMAX (" << gripper_motors[0].get_limits().vMax << ").\n";
+					runloop = 0;
+				}
 			}
 
 
@@ -551,10 +570,14 @@ int main(int argc, char** argv) {
 		std::cout << "Elapsed time: " << elapsed.count() << " seconds\n";
 		std::cout << "running frequency: " << (counter / elapsed.count()) << " Hz\n";
 
+		dm_collection.mit_control_all(mit_zero_commands);
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd);
 		dm_collection.disable_all();
-		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd, 1000);
 
 	} catch (const std::exception& e) {
+		dm_collection.mit_control_all(mit_zero_commands);
+		receive_all_can_replies(can_socket, dm_collection.get_device_collection(), config.use_fd);
+		dm_collection.disable_all();
 		std::cerr << "Error: " << e.what() << "\n";
 		return 1;
 	}
